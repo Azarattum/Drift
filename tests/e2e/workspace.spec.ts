@@ -1652,3 +1652,23 @@ test('mobile row height stays constant when a download waits for data', async ({
     );
   }
 });
+
+test('mobile inspector groups status and progress before its actions', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await server(page);
+  for (const width of [320, 390, 600]) {
+    await page.setViewportSize({ width, height: 760 });
+    await page.getByTestId('torrent-row').first().click();
+    const section = page.locator('.torrent-stage');
+    const status = await section.locator('.stage-heading').boundingBox();
+    const peers = await section.locator(':scope > p').boundingBox();
+    const progress = await section.locator('.detail-progress').boundingBox();
+    const actions = await section.locator('.stage-actions').boundingBox();
+    expect(peers!.y).toBeGreaterThanOrEqual(status!.y + status!.height);
+    expect(progress!.y).toBeGreaterThan(peers!.y + peers!.height);
+    expect(actions!.y).toBeGreaterThanOrEqual(progress!.y + progress!.height + 12);
+    expect(actions!.x + actions!.width).toBeLessThanOrEqual(width - 16);
+    await expect(section.locator('.stage-control')).toHaveText('Pause');
+    await page.getByRole('button', { name: 'Close inspector', exact: true }).click();
+  }
+});

@@ -4556,3 +4556,31 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
     color: var(--muted);
   }
 }
+
+@media (max-width: 900px) {
+  .torrent-stage .stage-heading {
+    margin-bottom: 6px;
+  }
+  .torrent-stage > p {
+    margin: 0;
+    line-height: 1.5;
+    font-size: 13px;
+  }
+  .torrent-stage .detail-progress {
+    margin-top: 12px;
+    height: 4px;
+    border-radius: 2px;
+  }
+  .torrent-stage > .stage-actions {
+    margin: 16px 0 0;
+    gap: 8px;
+  }
+  .torrent-stage > .stage-actions > .button {
+    flex: 1;
+    min-height: 44px;
+    white-space: nowrap;
+  }
+  .torrent-stage > .stage-actions > .button:only-child {
+    flex: none;
+  }
+}

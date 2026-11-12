@@ -442,11 +442,7 @@
         class:warning={s.tone === 'amber' || s.tone === 'red'}
         class:complete={t.percentDone === 1}
       >
-        <div class="stage-heading">
-          <span class="status-dot" class:pulse={s.active && !t.rateDownload && !t.rateUpload}
-          ></span>
-          <h3>{s.label}</h3>
-          {#if s.progress !== undefined && t.percentDone < 1}<b>{percent(s.progress)}</b>{/if}
+        {#snippet stageActions()}
           <div class="stage-actions">
             <button
               class="button primary compact stage-control"
@@ -458,7 +454,12 @@
                 />{:else if control.icon === 'stop'}<Square
                   size={16}
                   fill="currentColor"
-                />{:else}<Pause size={16} />{/if}{#if t.percentDone >= 1}<span>{control.label}</span
+                />{:else}<Pause size={16} />{/if}{#if mobile || t.percentDone >= 1}<span
+                  >{mobile && t.percentDone < 1
+                    ? control.icon === 'play'
+                      ? 'Resume'
+                      : 'Pause'
+                    : control.label}</span
                 >{/if}</button
             >
             {#if client.fullSpeedAvailable && t.percentDone < 1}<button
@@ -474,6 +475,13 @@
                   : 'Full speed'}</button
               >{/if}
           </div>
+        {/snippet}
+        <div class="stage-heading">
+          <span class="status-dot" class:pulse={s.active && !t.rateDownload && !t.rateUpload}
+          ></span>
+          <h3>{s.label}</h3>
+          {#if s.progress !== undefined && t.percentDone < 1}<b>{percent(s.progress)}</b>{/if}
+          {#if !mobile}{@render stageActions()}{/if}
         </div>
         <p>{t.errorString || s.detail}</p>
         {#if t.percentDone < 1}<div
@@ -482,6 +490,7 @@
           >
             <span style={`width:${(s.progress || 0) * 100}%`}></span>
           </div>{/if}
+        {#if mobile}{@render stageActions()}{/if}
       </section>
       <section class="detail-section">
         <div class="section-heading">
