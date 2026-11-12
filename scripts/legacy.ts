@@ -29,7 +29,9 @@ const server = Bun.serve({
       const body = await request.json();
       calls.push(body);
       const args = body.arguments || {};
-      const targets = torrents.filter((t) => !args.ids || args.ids.includes(t.id));
+      const targets = torrents.filter(
+        (t) => !args.ids || args.ids.includes(t.id) || args.ids.includes(t.hashString),
+      );
       let result: any = {};
       switch (body.method) {
         case 'torrent-get':
@@ -306,7 +308,7 @@ try {
   torrents.push(
     torrent({
       id: 99,
-      hashString: 'f'.repeat(40),
+      hashString: '9'.repeat(40),
       name: 'Legacy video',
       percentDone: 1,
       status: 0,

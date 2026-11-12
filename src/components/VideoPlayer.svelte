@@ -65,17 +65,38 @@
     duration = $state(0),
     muted = $state(false);
   let bufferTimer: ReturnType<typeof setTimeout>;
+  let stallTimer: ReturnType<typeof setTimeout>;
+  let reconnects = 0;
+  let lastReconnect = -1;
   function buffering() {
     clearTimeout(bufferTimer);
     bufferTimer = setTimeout(() => {
       waiting = !!video && video.readyState < 3;
     }, 350);
+    clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      if (!video || !selected || video.paused || video.readyState >= 3 || phase !== 'ready') return;
+      const at = pendingSeek ?? video.currentTime;
+      if (at > lastReconnect + 1) reconnects = 0;
+      lastReconnect = at;
+      if (++reconnects > 2) {
+        stop();
+        controller.abort();
+        phase = 'error';
+        message =
+          'The stream is not making progress. Your position is saved. Wait for more video data or check the connection, then try again.';
+        return;
+      }
+      void watch(selected, at);
+    }, 8000);
   }
   function buffered() {
     clearTimeout(bufferTimer);
+    clearTimeout(stallTimer);
     waiting = false;
   }
   let resume = $state<number | null>(null);
+  let pendingSeek: number | null = null;
   let listOpen = $state(false);
   let rate = $state(1);
   let captions = $state<TextTrack[]>([]);
@@ -129,10 +150,18 @@
         if (!document.hidden) {
           const response = await client.rpc.call<{ torrents: Torrent[] }>(
             'torrent-get',
-            { ids: [torrent.id], fields: ['hashString', 'files'] },
+            { ids: [torrent.hashString], fields: ['hashString', 'files'] },
             signal,
           );
           const updated = response.torrents.find((t) => t.hashString === torrent.hashString);
+          if (!updated && !signal.aborted && !disposed) {
+            stop();
+            controller.abort();
+            phase = 'error';
+            message =
+              'This torrent was removed or replaced. Open the current transfer to continue watching.';
+            return;
+          }
           if (updated && !signal.aborted && !disposed) {
             files = videoFiles(updated.files);
             selected = files.find((f) => f.index === file.index) ?? selected;
@@ -168,7 +197,11 @@
     controller.abort();
     close();
   }
-  async function watch(file: VideoFile) {
+  async function watch(file: VideoFile, reconnectAt?: number) {
+    if (reconnectAt === undefined) {
+      reconnects = 0;
+      lastReconnect = -1;
+    }
     stop();
     controller.abort();
     controller = new AbortController();
@@ -178,6 +211,7 @@
     phase = 'preparing';
     message = '';
     resume = null;
+    pendingSeek = reconnectAt ?? null;
     restored = false;
     hasPlayed = false;
     current = 0;
@@ -197,7 +231,10 @@
         loadPlayerEngine(),
       ]);
       if (disposed || signal.aborted) return;
-      resume = playbackPosition(positionKey(endpoint, torrent.hashString, file))?.time ?? null;
+      resume =
+        reconnectAt === undefined
+          ? (playbackPosition(positionKey(endpoint, torrent.hashString, file))?.time ?? null)
+          : null;
       source = url;
       phase = 'ready';
       if (file.bytesCompleted < file.length) monitor(file, signal);
@@ -210,7 +247,11 @@
   }
   async function play(at?: number) {
     if (!video) return;
-    if (at !== undefined) video.currentTime = Math.min(at, Math.max(0, video.duration - 0.1));
+    if (at !== undefined) {
+      if (video.readyState >= 1 && Number.isFinite(video.duration))
+        video.currentTime = Math.min(at, Math.max(0, video.duration - 0.1));
+      else pendingSeek = at;
+    }
     resume = null;
     try {
       await video.play();
@@ -221,6 +262,13 @@
   function metadata() {
     if (!video) return;
     duration = video.duration;
+    if (pendingSeek !== null) {
+      const at = pendingSeek;
+      pendingSeek = null;
+      restored = true;
+      void play(at);
+      return;
+    }
     if (restored) return;
     restored = true;
     if (resume !== null && (!Number.isFinite(duration) || resume >= duration - 10)) resume = null;
@@ -301,7 +349,7 @@
       try {
         const r = await client.rpc.call<{ torrents: Torrent[] }>(
           'torrent-get',
-          { ids: [torrent.id], fields: ['id', 'hashString', 'name', 'files'] },
+          { ids: [torrent.hashString], fields: ['id', 'hashString', 'name', 'files'] },
           signal,
         );
         if (disposed || signal.aborted) return;
@@ -411,6 +459,7 @@
         class="watch-canvas"
         class:watch-fullscreen={fullscreen}
         class:watch-keyboard={keyboardControls}
+        class:watch-resuming={resume !== null}
         onpointerdown={() => (keyboardControls = false)}
         role="group"
         aria-label="Video player"
@@ -466,11 +515,9 @@
             <h3>Pick up where you left off</h3>
             <p>Continue from {clock(resume)}</p>
             <div>
-              <button class="button primary" disabled={!duration} onclick={() => play(resume!)}
+              <button class="button primary" onclick={() => play(resume!)}
                 ><Play size={17} fill="currentColor" />Resume from {clock(resume)}</button
-              ><button class="button watch-start-over" disabled={!duration} onclick={() => play(0)}
-                >Start over</button
-              >
+              ><button class="button watch-start-over" onclick={() => play(0)}>Start over</button>
             </div>
           </div>
         {:else if paused && !waiting && duration > 0}<button

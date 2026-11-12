@@ -115,6 +115,17 @@ test('real playback, Video.js controls, resume, keyboard and close cleanup', asy
   await video.click({ position: { x: 90, y: 70 } });
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(false);
   await page.getByRole('button', { name: 'Pause', exact: true }).click();
+  await expect(page.locator('.watch-big-play')).toBeVisible();
+  const alignment = await page.locator('.watch-big-play').evaluate((button) => {
+    const b = button.getBoundingClientRect();
+    const icon = button.querySelector('svg')!.getBoundingClientRect();
+    return {
+      x: icon.x + icon.width / 2 - (b.x + b.width / 2),
+      y: icon.y + icon.height / 2 - (b.y + b.height / 2),
+    };
+  });
+  expect(alignment.x).toBeCloseTo(0, 1);
+  expect(alignment.y).toBeCloseTo(0, 1);
   await page.getByRole('button', { name: 'Seek forward 10 seconds', exact: true }).click();
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
@@ -155,9 +166,31 @@ test('real playback, Video.js controls, resume, keyboard and close cleanup', asy
     .toBe('showing');
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(video).toHaveCount(0);
+  let releaseMedia!: () => void;
+  const metadataGate = new Promise<void>((resolve) => {
+    releaseMedia = resolve;
+  });
+  await page.route('**/v1/media/**', async (route) => {
+    if (route.request().method() === 'GET') await metadataGate;
+    await route.fallback();
+  });
   await page.getByRole('button', { name: 'Watch video', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Pick up where you left off' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Resume from 0:25' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Start over', exact: true })).toBeEnabled();
+  const resumeGeometry = await page.locator('.watch-canvas').evaluate((canvas) => {
+    const bounds = canvas.getBoundingClientRect();
+    const overlay = canvas.querySelector('.watch-resume')!.getBoundingClientRect();
+    return {
+      uncovered: bounds.bottom - overlay.bottom,
+      controls: getComputedStyle(canvas.querySelector('.watch-controls')!).display,
+    };
+  });
+  expect(resumeGeometry.uncovered).toBeCloseTo(0, 0);
+  expect(resumeGeometry.controls).toBe('none');
   await page.getByRole('button', { name: 'Resume from 0:25' }).click();
+  await expect(page.getByRole('heading', { name: 'Pick up where you left off' })).toHaveCount(0);
+  releaseMedia();
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
     .toBeGreaterThan(24);
@@ -247,6 +280,30 @@ test('buffering describes a browser wait without guessing which torrent bytes ar
     v.dispatchEvent(new Event('canplay'));
   });
   await expect(page.locator('.watch-buffering')).toHaveCount(0);
+});
+
+test('a stuck stream reconnects and continues at the same position without a resume prompt', async ({
+  page,
+}) => {
+  const { calls } = await setup(page);
+  const video = page.locator('.drift-player video');
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState))
+    .toBeGreaterThanOrEqual(3);
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(false);
+  await page.clock.install();
+  await video.evaluate((v: HTMLVideoElement) => {
+    Object.defineProperty(v, 'readyState', { configurable: true, value: 2 });
+    Object.defineProperty(v, 'currentTime', { configurable: true, value: 25 });
+    v.dispatchEvent(new Event('waiting'));
+  });
+  await page.clock.fastForward(8500);
+  await expect.poll(() => calls.filter((c) => c.method === 'POST').length).toBe(2);
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeGreaterThan(24);
+  await expect(page.getByRole('heading', { name: 'Pick up where you left off' })).toHaveCount(0);
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(false);
 });
 
 test('multiple files, matching mobile theme, file switching and touch targets', async ({

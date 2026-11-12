@@ -101,6 +101,12 @@ install the current companion as well as the frontend for authenticated playback
 Passwords stay out of media URLs; file-scoped playback tickets expire after twelve
 hours. The player engine and conditional stylesheet polyfill load only when watching.
 
+Download percentage describes file bytes, not buffered playback time. A stream
+that stops making progress reconnects at the current position, with two attempts
+before offering an explicit retry. Resume and Start over remain usable while
+metadata loads. Torrent lookups use the info hash so changing Transmission IDs
+does not leave stale progress attached to playback.
+
 ## Activity history
 
 Transmission's [RPC statistics](https://github.com/transmission/transmission/blob/4.0.5/docs/rpc-spec.md#42-session-statistics) provide current speeds and cumulative totals. They do not provide a timestamped speed history.
