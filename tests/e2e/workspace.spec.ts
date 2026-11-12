@@ -1629,3 +1629,26 @@ test('mobile rows stay stable as rates change and inspector actions keep their i
     await expect(row.locator('.mobile-row-speeds')).toContainText('123 B/s');
   }
 });
+
+test('mobile row height stays constant when a download waits for data', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const { torrents } = await server(page);
+  const t = torrents[0];
+  for (const width of [320, 360, 390, 430]) {
+    await page.setViewportSize({ width, height: 760 });
+    t.rateDownload = 1000000;
+    const row = page.getByTestId('torrent-row').first();
+    await expect(row.locator('.stage-label')).toHaveText('Downloading');
+    const before = await row.boundingBox();
+    t.rateDownload = 0;
+    t.peersConnected = 10;
+    t.desiredAvailable = 100;
+    await expect(row.locator('.stage-label')).toHaveText('Waiting for data');
+    const after = await row.boundingBox();
+    expect(after!.height).toBe(before!.height);
+    expect(after!.width).toBe(before!.width);
+    expect(await row.locator('.size').evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(
+      true,
+    );
+  }
+});
