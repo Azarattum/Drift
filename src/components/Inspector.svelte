@@ -1028,14 +1028,12 @@
       }
     }}
   >
-    <div class="menu-caption">Priority</div>
     <PriorityControl
       value={priority(fileContext.node)}
       onchange={(value) => {
         void setPriority(fileContext!.node, value);
       }}
     />
-    <hr />
     <button
       role="menuitem"
       onclick={() => {

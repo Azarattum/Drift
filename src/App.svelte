@@ -33,10 +33,6 @@
     Moon,
     Monitor,
     Square,
-    ChevronsUp,
-    ChevronsDown,
-    ArrowUpToLine,
-    ArrowDownToLine as MoveToBottom,
     WifiOff,
     MoreHorizontal,
     Pause,
@@ -865,7 +861,6 @@
       ><Copy size={15} />Copy info hash</button
     >
     <hr />
-    <div class="menu-caption">Priority</div>
     <PriorityControl
       label="Bandwidth priority"
       value={actionTorrents.every(
@@ -879,15 +874,6 @@
           client.queueOption(torrent.id, 'bandwidthPriority', value, 0);
       }}
     />
-    {#if actionTorrents.some((t) => t.percentDone < 1 || t.status === 5)}
-      <hr />
-      <div class="menu-caption">Queue order</div>
-      {#each [{ method: 'queue-move-top', label: 'Move to top', icon: ArrowUpToLine }, { method: 'queue-move-up', label: 'Move up', icon: ChevronsUp }, { method: 'queue-move-down', label: 'Move down', icon: ChevronsDown }, { method: 'queue-move-bottom', label: 'Move to bottom', icon: MoveToBottom }] as action}
-        <button role="menuitem" onclick={() => run(action.method)}
-          ><action.icon size={15} />{action.label}</button
-        >
-      {/each}
-    {/if}
     <hr />
     <button role="menuitem" class="danger" onclick={requestRemove}
       ><Trash2 size={15} />Remove… <kbd>⌫</kbd></button

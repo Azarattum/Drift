@@ -1107,6 +1107,16 @@ test('file right-click changes priority directly and phone scrollers fit their v
   await page.getByRole('tab', { name: 'Files', exact: true }).click();
   await page.getByRole('treeitem').first().click({ button: 'right' });
   await expect(page.getByRole('menu', { name: 'File actions' })).toBeVisible();
+  const fileMenu = page.getByRole('menu', { name: 'File actions' });
+  await expect(fileMenu.locator('.menu-caption,hr')).toHaveCount(0);
+  const priorityBounds = await fileMenu
+    .getByRole('group', { name: 'Priority', exact: true })
+    .boundingBox();
+  const renameBounds = await fileMenu
+    .getByRole('menuitem', { name: 'Rename…', exact: true })
+    .boundingBox();
+  expect(priorityBounds!.height).toBe(renameBounds!.height);
+
   await expect(page.getByRole('button', { name: 'Normal', exact: true })).toHaveAttribute(
     'aria-pressed',
     'true',
@@ -1508,9 +1518,7 @@ test('peer headers sort in both directions and availability is vertically center
   ).toBeLessThan(2);
 });
 
-test('torrent priority is visible in rows and queue actions have explicit labels', async ({
-  page,
-}) => {
+test('torrent priority occupies one menu slot without queue actions', async ({ page }) => {
   const { torrents, calls } = await server(page);
   torrents[0].bandwidthPriority = 1;
   torrents[1].bandwidthPriority = -1;
@@ -1518,13 +1526,16 @@ test('torrent priority is visible in rows and queue actions have explicit labels
   await expect(page.getByTestId('torrent-row').nth(1)).toContainText('Low priority');
   await expect(page.getByTestId('torrent-row').nth(2).locator('.torrent-priority')).toHaveCount(0);
   await page.getByTestId('torrent-row').first().click({ button: 'right' });
-  await expect(page.locator('.menu-caption').filter({ hasText: 'Queue order' })).toBeVisible();
+  await expect(
+    page.locator('.menu-caption').filter({ hasText: /Queue order|Priority/ }),
+  ).toHaveCount(0);
   for (const name of ['Move to top', 'Move up', 'Move down', 'Move to bottom'])
-    await expect(page.getByRole('menuitem', { name, exact: true })).toBeVisible();
-  await page.getByRole('menuitem', { name: 'Move to top', exact: true }).click();
-  await expect
-    .poll(() => calls.find((c) => c.method === 'queue-move-top')?.arguments.ids)
-    .toEqual([1]);
+    await expect(page.getByRole('menuitem', { name, exact: true })).toHaveCount(0);
+  const control = await page.getByRole('group', { name: 'Bandwidth priority' }).boundingBox();
+  const regular = await page
+    .getByRole('menuitem', { name: 'Copy info hash', exact: true })
+    .boundingBox();
+  expect(control!.height).toBe(regular!.height);
 });
 
 test('torrent priority segmented control highlights and saves each mode', async ({ page }) => {

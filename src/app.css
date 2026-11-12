@@ -3547,14 +3547,11 @@ input[type='number']::-webkit-outer-spin-button {
 }
 
 .context-menu > .priority-control {
-  margin: 0 3px 10px;
-  min-height: 38px;
+  margin: 0 3px;
+  min-height: 39px;
 }
 .context-menu > .priority-control button {
-  min-height: 32px;
-}
-.context-menu > .priority-control + hr {
-  margin-top: 0;
+  min-height: 33px;
 }
 @media (max-width: 760px) {
   .context-menu > .priority-control {
