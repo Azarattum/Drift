@@ -172,3 +172,29 @@ test('stale controller heartbeats hide Full speed', async ({ page }) => {
   await page.getByTestId('torrent-row').first().click();
   await expect(page.locator('.boost-card')).toHaveCount(0);
 });
+
+test('dark theme, reduced motion, and batch selection work together', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+  await server(page);
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.getByTestId('torrent-row').first().click();
+  await page
+    .getByTestId('torrent-row')
+    .nth(2)
+    .click({ modifiers: ['Shift'] });
+  await expect(page.getByText('3 selected', { exact: true })).toBeVisible();
+  await page.getByTestId('torrent-row').nth(2).click({ button: 'right' });
+  await expect(page.locator('.menu-caption')).toContainText('3 transfers');
+  await page.screenshot({ path: 'test-results/drift-dark.png', fullPage: true });
+});
+
+test('a connection failure keeps existing data visible and explains its freshness', async ({
+  page,
+}) => {
+  await server(page);
+  await page.route(/\/rpc$/, (route) => route.abort());
+  await expect(page.getByRole('alert')).toContainText('Showing last received data', {
+    timeout: 15000,
+  });
+  await expect(page.getByTestId('torrent-row')).toHaveCount(6);
+});

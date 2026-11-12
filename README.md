@@ -93,3 +93,11 @@ The helper derives the bind address from UCI; DRIFT_RPC_URL can override the end
 Flat surfaces, a restrained hierarchy, contextual controls, and explicit state. Keyed FLIP movement, interpolated inspector layout, short overlay motion, and functional scroll fades. No decorative gradients or private design-library dependencies.
 
 MIT. Inter: SIL Open Font License. Lucide: ISC. Dependency licenses are included in their packages.
+
+An opt-in live smoke check is available after deployment:
+
+```sh
+bun scripts/smoke.ts http://router.local:9091/transmission/web/
+```
+
+It creates one private synthetic test torrent, exercises the real file tree and optional Full speed control, checks restoration, then removes its own test torrent. It does not change existing transfers.

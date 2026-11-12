@@ -60,3 +60,9 @@ test('formatting handles unknown and invalid data', () => {
   expect(duration(-1)).toBe('—');
   expect(duration(3600)).toBe('1h 0m');
 });
+
+test('web-seed downloads never claim impossible peer counts', () => {
+  expect(
+    stage(torrent({ peersConnected: 0, peersSendingToUs: 0, webseedsSendingToUs: 1 })).detail,
+  ).toBe('Receiving data from 1 web seed');
+});
