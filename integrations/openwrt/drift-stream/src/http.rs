@@ -12,7 +12,15 @@ use hyper::{
     header::{self, HeaderValue},
 };
 use serde_json::json;
-use std::{convert::Infallible, fs::File, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    convert::Infallible,
+    fs::File,
+    io::Read,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
     time::{Instant, sleep, timeout},
@@ -28,6 +36,12 @@ pub struct State {
     pub roots: Vec<Root>,
     pub rpc: Rpc,
     streams: Arc<Semaphore>,
+    leases: Mutex<BTreeMap<String, Lease>>,
+}
+struct Lease {
+    path: String,
+    authorization: HeaderValue,
+    expires: Instant,
 }
 impl State {
     pub fn new(config: Config) -> Result<Self, Error> {
@@ -41,7 +55,63 @@ impl State {
             config,
             roots,
             streams: Arc::new(Semaphore::new(4)),
+            leases: Mutex::new(BTreeMap::new()),
         })
+    }
+    fn media_authorization(&self, request: &Request<Incoming>) -> Option<HeaderValue> {
+        let leases = self.leases.lock().ok()?;
+        request
+            .uri()
+            .query()
+            .and_then(|q| q.strip_prefix("ticket="))
+            .into_iter()
+            .chain(
+                request
+                    .headers()
+                    .get_all(header::COOKIE)
+                    .iter()
+                    .filter_map(|v| v.to_str().ok())
+                    .flat_map(|v| v.split(';'))
+                    .filter_map(|v| v.trim().strip_prefix("drift_media=")),
+            )
+            .filter_map(|token| leases.get(token))
+            .find(|l| l.path == request.uri().path() && l.expires > Instant::now())
+            .map(|l| l.authorization.clone())
+    }
+    fn authorize_media(
+        &self,
+        path: String,
+        authorization: HeaderValue,
+    ) -> Result<(HeaderValue, String), Error> {
+        let mut random = [0u8; 32];
+        File::open("/dev/urandom")?.read_exact(&mut random)?;
+        use base64::Engine;
+        let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random);
+        let mut leases = self
+            .leases
+            .lock()
+            .map_err(|_| "Session store unavailable")?;
+        leases.retain(|_, l| l.expires > Instant::now());
+        if leases.len() >= 16 {
+            if let Some(oldest) = leases
+                .iter()
+                .min_by_key(|(_, l)| l.expires)
+                .map(|(k, _)| k.clone())
+            {
+                leases.remove(&oldest);
+            }
+        }
+        let cookie =
+            format!("drift_media={token}; Path={path}; Max-Age=43200; HttpOnly; SameSite=Strict");
+        leases.insert(
+            token.clone(),
+            Lease {
+                path,
+                authorization,
+                expires: Instant::now() + Duration::from_secs(43200),
+            },
+        );
+        Ok((cookie.parse()?, token))
     }
 }
 
@@ -71,6 +141,7 @@ pub async fn handle(
         "content-security-policy",
         HeaderValue::from_static("default-src 'none'; sandbox"),
     );
+    headers.insert("referrer-policy", HeaderValue::from_static("no-referrer"));
     headers.insert(header::VARY, HeaderValue::from_static("Origin"));
     // Valid callers can read authentication, buffering and range errors too.
     {
@@ -158,7 +229,19 @@ async fn checked(
     local: SocketAddr,
 ) -> Result<Response<Body>, Failure> {
     validate_context(&request, state, local)?;
-    if request.uri().query().is_some() || request.uri().authority().is_some() {
+    let ticket_query = request.uri().query().is_some_and(|q| {
+        q.strip_prefix("ticket=").is_some_and(|t| {
+            t.len() == 43
+                && t.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+    });
+    if (request.uri().query().is_some()
+        && !(ticket_query
+            && request.uri().path().starts_with("/v1/media/")
+            && (request.method() == Method::GET || request.method() == Method::HEAD)))
+        || request.uri().authority().is_some()
+    {
         return Err(error(StatusCode::BAD_REQUEST, "Invalid URL\n"));
     }
     if request.method() == Method::OPTIONS {
@@ -173,7 +256,11 @@ async fn checked(
         );
         return Ok(r);
     }
-    let auth = request.headers().get(header::AUTHORIZATION).cloned();
+    let auth = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .cloned()
+        .or_else(|| state.media_authorization(&request));
     if state.config.authentication
         && auth
             .as_ref()
@@ -281,7 +368,37 @@ async fn checked(
                 .await
                 .map_err(rpc_error)?;
         }
-        return Ok(response(StatusCode::OK, "application/json", &json!({"version":1,"src":format!("/v1/media/{hash}/{index}"),"type":mime,"length":length}).to_string()));
+        let path = format!("/v1/media/{hash}/{index}");
+        let session = if state.config.authentication {
+            Some(
+                state
+                    .authorize_media(
+                        path.clone(),
+                        auth.ok_or(error(StatusCode::UNAUTHORIZED, "Authentication required\n"))?,
+                    )
+                    .map_err(|_| {
+                        error(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "Cannot create media session\n",
+                        )
+                    })?,
+            )
+        } else {
+            None
+        };
+        let src = session.as_ref().map_or_else(
+            || path.clone(),
+            |(_, ticket)| format!("{path}?ticket={ticket}"),
+        );
+        let mut reply = response(
+            StatusCode::OK,
+            "application/json",
+            &json!({"version":1,"src":src,"type":mime,"length":length}).to_string(),
+        );
+        if let Some((cookie, _)) = session {
+            reply.headers_mut().insert(header::SET_COOKIE, cookie);
+        }
+        return Ok(reply);
     }
     if torrent.status == 1
         || torrent.status == 2

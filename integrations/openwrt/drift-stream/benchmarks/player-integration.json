@@ -1,0 +1,83 @@
+{
+  "productionPlayer": {
+    "playback": true,
+    "resume": true
+  },
+  "fixtureBytes": 12890594,
+  "binaryBytes": 980400,
+  "idleStart": {
+    "ticks": 17,
+    "totalTicks": 73689860,
+    "detail": [
+      "VmHWM: 1144",
+      "VmRSS: 1052",
+      "Threads: 1",
+      "voluntary_ctxt_switches: 285",
+      "nonvoluntary_ctxt_switches: 77"
+    ]
+  },
+  "idleEnd": {
+    "ticks": 17,
+    "totalTicks": 73691895,
+    "detail": [
+      "VmHWM: 1144",
+      "VmRSS: 1052",
+      "Threads: 1",
+      "voluntary_ctxt_switches: 285",
+      "nonvoluntary_ctxt_switches: 77"
+    ]
+  },
+  "idleTicks": 0,
+  "trials": [
+    {
+      "concurrency": 1,
+      "bytes": 103124752,
+      "seconds": 2.5544702499999983,
+      "mibPerSecond": 38.50012634445992,
+      "cpuTicks": 93,
+      "machineTicks": 543,
+      "after": {
+        "ticks": 110,
+        "totalTicks": 73692491,
+        "detail": [
+          "VmHWM: 1192",
+          "VmRSS: 1056",
+          "Threads: 3",
+          "voluntary_ctxt_switches: 1578",
+          "nonvoluntary_ctxt_switches: 1736"
+        ]
+      }
+    },
+    {
+      "concurrency": 4,
+      "bytes": 412499008,
+      "seconds": 6.350818584000004,
+      "mibPerSecond": 61.943150204880105,
+      "cpuTicks": 380,
+      "machineTicks": 1317,
+      "after": {
+        "ticks": 490,
+        "totalTicks": 73693845,
+        "detail": [
+          "VmHWM: 1456",
+          "VmRSS: 1056",
+          "Threads: 3",
+          "voluntary_ctxt_switches: 3249",
+          "nonvoluntary_ctxt_switches: 8476"
+        ]
+      }
+    }
+  ],
+  "paced": {
+    "targetBitsPerSecond": 20000000,
+    "bytes": 12890594,
+    "seconds": 5.379420375000001,
+    "cpuTicks": 9,
+    "machineTicks": 1074
+  },
+  "deniedRequests": [404, 400, 404],
+  "sparsePartWait": true,
+  "observedExitMs": 210.58654199999728,
+  "procdRestart": true,
+  "procdStop": true
+}

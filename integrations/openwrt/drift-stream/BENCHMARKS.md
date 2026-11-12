@@ -88,3 +88,30 @@ development dependencies, and returned no advisories. The result is saved in
 lookup, not proof that the application is vulnerability-free. A separate
 `cargo-audit` database fetch did not complete and was stopped; no completed
 RustSec audit is claimed.
+
+## Player integration follow-up
+
+The production frontend was subsequently served by the isolated Transmission
+instance on the same router. Chromium opened **Watch video**, decoded the actual
+MP4, played it, sought forward, closed the dialog, and resumed from the saved
+position. This used the production `dist/` bundle and the native companion, with
+no mocked RPC or media responses. The normal Transmission service stayed running.
+This browser check does not represent a physical iPhone test.
+
+This follow-up includes the file-scoped native playback session changes. The
+statically linked binary was **980,400 bytes**, SHA-256:
+
+```text
+725c5e3946e704ea25582cddeb06f433cccd1209cab1d62cfc3b478af7be5bcd
+```
+
+Raw counters: [benchmarks/player-integration.json](benchmarks/player-integration.json).
+The same ten-second idle sample, taken after closing the browser, recorded
+**17 → 17 CPU ticks**, **285 → 285 voluntary context switches**, and
+**77 → 77 involuntary context switches**. Resident memory was **1,052 KiB** with
+one thread. One reader measured **38.50 MiB/s**, four readers **61.94 MiB/s**, and
+the paced 20 Mbit/s sample consumed **9 CPU ticks / 1,074 whole-machine ticks**.
+These are independent samples under the same limitations as the original run.
+Range integrity, sparse `.part` waiting, access rejection, and procd
+crash/respawn/stop checks passed again; observing the companion exit took **211 ms**.
+The isolated service, temporary frontend and test data were removed afterward.

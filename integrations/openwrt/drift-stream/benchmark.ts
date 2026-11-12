@@ -4,9 +4,9 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp, rm } from 'node:fs/promises';
 
-const [host, portText = '19091'] = Bun.argv.slice(2);
-if (!host || !/^[a-zA-Z0-9_.@:-]+$/.test(host))
-  throw new Error('Usage: bun benchmark.ts user@router [unused RPC port]');
+const [host, portText = '19091', playerFlag] = Bun.argv.slice(2);
+if (!host || !/^[a-zA-Z0-9_.@:-]+$/.test(host) || (playerFlag && playerFlag !== '--player'))
+  throw new Error('Usage: bun benchmark.ts user@router [unused RPC port] [--player]');
 const port = Number(portText);
 if (!Number.isInteger(port) || port < 1024 || port >= 65535) throw new Error('Invalid port');
 const address = host.split('@').at(-1)!;
@@ -71,6 +71,7 @@ const remote = `/tmp/drift-stream-${randomUUID()}`;
 let dataDir = '';
 let daemonPid = '';
 let streamPid = '';
+let playerResult: { playback: boolean; resume: boolean } | undefined;
 const serviceName = 'drift-stream-benchmark';
 const servicePath = `${remote}/${serviceName}`;
 try {
@@ -129,6 +130,25 @@ try {
   );
   await ssh(`cat > ${q(dataDir + '/video.mp4')}`, data);
   const client = await ssh('set -- $SSH_CONNECTION; printf "%s" "$1"');
+  const web = dataDir + '/web';
+  if (playerFlag === '--player') {
+    const bundle = join(root, '../../../dist');
+    if (!(await Bun.file(join(bundle, 'index.html')).exists()))
+      throw new Error('Build the frontend first');
+    await ssh(`mkdir -p ${q(web)}`);
+    const archive = Bun.spawn(['tar', '-C', bundle, '-cf', '-', '.'], {
+      stdout: 'pipe',
+      stderr: 'inherit',
+      env: { ...process.env, COPYFILE_DISABLE: '1' },
+    });
+    const upload = Bun.spawn(['ssh', '-o', 'BatchMode=yes', host, `tar -xf - -C ${q(web)}`], {
+      stdin: archive.stdout,
+      stdout: 'ignore',
+      stderr: 'inherit',
+    });
+    if ((await upload.exited) || (await archive.exited))
+      throw new Error('Cannot stage frontend bundle');
+  }
   const settings = {
     'download-dir': dataDir,
     'rpc-enabled': true,
@@ -195,6 +215,7 @@ start_service() {
     procd_open_instance transmission
     procd_set_param command /usr/bin/transmission-daemon -f -g "$config_dir"
     procd_set_param respawn 3600 1 5
+    procd_set_param env TRANSMISSION_WEB_HOME=${q(dataDir + '/web')}
     procd_close_instance
     . ${q(remote + '/hook')}
 }
@@ -229,6 +250,36 @@ start_service() {
     await Bun.sleep(100);
   }
   if (!ready) throw new Error('Companion did not become ready under procd');
+  if (playerFlag === '--player') {
+    const { chromium } = await import('@playwright/test');
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.goto(`${url}/transmission/web/`);
+      await page.locator('[data-testid="torrent-row"]').first().click();
+      await page.getByRole('button', { name: 'Watch video', exact: true }).click();
+      const video = page.locator('.drift-player video');
+      await page.waitForFunction(() => {
+        const v = document.querySelector('video');
+        return v && v.readyState >= 2;
+      });
+      await video.evaluate(async (v: HTMLVideoElement) => {
+        await v.play();
+        v.currentTime = 8;
+      });
+      await page.waitForFunction(() => document.querySelector('video')!.currentTime >= 8);
+      await page.getByRole('button', { name: 'Pause', exact: true }).click();
+      await page.getByRole('button', { name: 'Close dialog' }).click();
+      await page.locator('dialog').waitFor({ state: 'detached' });
+      await page.getByRole('button', { name: 'Watch video', exact: true }).click();
+      await page.getByRole('button', { name: /Resume from 0:0[89]/ }).click();
+      if ((await video.evaluate((v: HTMLVideoElement) => v.currentTime)) < 7)
+        throw new Error('Live resume failed');
+      playerResult = { playback: true, resume: true };
+    } finally {
+      await browser.close();
+    }
+  }
   const stats = async () => {
     const result = await ssh(
       `test -r /proc/${streamPid}/stat || exit 1; awk '{print $14+$15}' /proc/${streamPid}/stat; awk '/^cpu / {s=0;for(i=2;i<=9;i++)s+=$i;print s}' /proc/stat; awk '/^VmRSS:|^VmHWM:|^Threads:|^voluntary_ctxt_switches:|^nonvoluntary_ctxt_switches:/ {print $1,$2}' /proc/${streamPid}/status; if test -r /proc/${streamPid}/wchan; then cat /proc/${streamPid}/wchan; echo; fi; if test -r /proc/${streamPid}/schedstat; then cat /proc/${streamPid}/schedstat; fi; true`,
@@ -400,6 +451,7 @@ start_service() {
   console.log(
     JSON.stringify(
       {
+        productionPlayer: playerResult,
         fixtureBytes: data.length,
         binaryBytes: binary.size,
         idleStart,

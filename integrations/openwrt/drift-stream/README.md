@@ -82,13 +82,23 @@ Single byte ranges, suffix ranges and open-ended ranges return `206` with
 There is no cache/ETag contract for changing files. Errors use fixed text and never
 include RPC strings, local paths, torrent names or credentials.
 
-The frontend must send the same Basic `Authorization` header when Transmission
-requires it. Each media request authenticates against the daemon; stored salted
-password hashes are never used as passwords or exposed to the browser. A future
-native video integration must arrange browser HTTP authentication or a same-origin
-proxy; a `<video>` element cannot attach Drift's in-memory Authorization header
-on its own. Tokens in media URLs and bypasses of Transmission authentication are
-not implemented. The current public/no-auth LAN setup needs neither workaround.
+The Play request sends the same Basic `Authorization` header when Transmission
+requires it. After successful RPC authentication, the companion creates a random
+256-bit, file-scoped session and returns a `src` with an opaque `ticket` query
+parameter. It also sets an HttpOnly, SameSite=Strict, path-scoped cookie. The ticket
+supports WebKit native range requests that omit the cross-origin cookie. Neither
+contains a username or password. The frontend accepts only the exact expected
+media path on the derived companion origin and a single well-formed ticket.
+
+Sessions expire after twelve hours, are bounded to sixteen entries, remain only
+in memory, and disappear on restart. Expiry is checked on requests, with no idle
+timer. Each media request still authenticates against Transmission using the
+in-memory credentials, so password changes invalidate existing sessions. A ticket
+cannot read another file, change download settings, or access RPC. Only the
+`ticket` query parameter is accepted on media GET/HEAD; arbitrary path arguments
+remain rejected. Treat playback URLs as temporary access links: they may be handed
+to a cast device and should not be shared or logged by an added proxy. The service
+has no access logger or analytics and returns `Referrer-Policy: no-referrer`.
 
 CORS permits HTTP origins on the same validated hostname at the RPC or stream
 port. Credentials are allowed only for that exact origin. Aliases must match the
@@ -113,8 +123,7 @@ This is not a second torrent engine. It cannot demand an arbitrary missing piece
 without changing Transmission's torrent-wide sequential cursor. Play selects the
 file's starting piece; subsequent byte-range seeks wait for available pieces.
 Concurrent Play operations on the same torrent share Transmission's single
-cursor. MP4 metadata at the end can delay startup. Resume positions, timeline
-indexing and the player UI remain frontend work.
+cursor. MP4 metadata at the end can delay startup. The frontend implements playback positions and its watching UI; arbitrary missing-piece seek prioritization and container indexing are not provided by this daemon.
 
 ## Security boundary
 
@@ -170,7 +179,7 @@ bun integrations/openwrt/drift-stream/benchmark.ts root@router.local
 ```
 
 The default test ports are 19091–19093; supply another unused RPC port as the
-second argument if necessary. The script starts an isolated Transmission and
+second argument if necessary. Add `--player` as the third argument to stage the production frontend `dist/` into the isolated Transmission web home and exercise actual Chromium playback and resume from the router-served app. The script starts an isolated Transmission and
 procd service, uses a temporary directory on the existing download disk, validates
 SHA-256 hashes and byte ranges, measures idle counters and paced/concurrent
 transfers, tests a sparse `.part`, exercises crash/respawn/stop, and removes its

@@ -311,3 +311,83 @@ async fn auth_origin_path_and_container_rejections() {
         416
     );
 }
+
+#[tokio::test]
+async fn media_sessions_are_opaque_scoped_and_still_checked_by_transmission() {
+    let f = Fixture::new(true).await;
+    let response = f
+        .request(
+            "POST",
+            &format!("/v1/play/{HASH}/1"),
+            &[
+                ("authorization", "Basic dXNlcjpwYXNz"),
+                ("x-drift-stream", "1"),
+            ],
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    let cookie = response.headers()["set-cookie"].to_str().unwrap();
+    assert!(cookie.contains("HttpOnly; SameSite=Strict"));
+    assert!(cookie.contains(&format!("Path=/v1/media/{HASH}/1")));
+    assert!(!cookie.contains("dXNlcjpwYXNz"));
+    let token = cookie.split(';').next().unwrap().to_owned();
+    let payload: serde_json::Value =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let ticket_url = payload["src"].as_str().unwrap();
+    assert!(ticket_url.contains("?ticket="));
+    assert!(!ticket_url.contains("dXNlcjpwYXNz"));
+    assert_eq!(
+        f.request("GET", ticket_url, &[("range", "bytes=0-1")])
+            .await
+            .status(),
+        206
+    );
+    assert_eq!(
+        f.request("GET", &ticket_url.replace("/1?", "/2?"), &[])
+            .await
+            .status(),
+        401
+    );
+
+    let media = f
+        .request(
+            "GET",
+            &format!("/v1/media/{HASH}/1"),
+            &[("cookie", token.as_str()), ("range", "bytes=0-1")],
+        )
+        .await;
+    assert_eq!(media.status(), 206);
+    assert_eq!(
+        media.into_body().collect().await.unwrap().to_bytes(),
+        &f.data[..2]
+    );
+    assert_eq!(
+        f.request(
+            "GET",
+            &format!("/v1/media/{HASH}/2"),
+            &[("cookie", token.as_str())]
+        )
+        .await
+        .status(),
+        401
+    );
+    assert_eq!(
+        f.request("GET", "/v1/status", &[("cookie", token.as_str())])
+            .await
+            .status(),
+        401
+    );
+    assert_eq!(
+        f.request(
+            "GET",
+            &format!("/v1/media/{HASH}/1"),
+            &[
+                ("cookie", token.as_str()),
+                ("authorization", "Basic dXNlcjp3cm9uZw==")
+            ]
+        )
+        .await
+        .status(),
+        401
+    );
+}
