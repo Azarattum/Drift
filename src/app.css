@@ -873,13 +873,18 @@ input[role='switch']:checked::after {
   bottom: 7px;
   left: 56px;
   right: 12px;
-  height: 2px;
-  background: var(--border);
+  height: 4px;
+  border-radius: 3px;
+  background: #e2e6f3;
   overflow: hidden;
+}
+:root[data-theme='dark'] .row-progress {
+  background: #3b4056;
 }
 .row-progress > span {
   display: block;
   height: 100%;
+  border-radius: inherit;
   transition: width 0.3s;
 }
 .row-progress.finished {
