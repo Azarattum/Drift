@@ -473,7 +473,19 @@
                   {/if}{/each}
                 {#if group.title === 'Connections'}<div class="setting-row port-test-row">
                     <span class="setting-copy"
-                      ><b>Port reachability</b><small>Check whether peers can connect to you.</small
+                      ><b>Port reachability</b><small
+                        class="inline-result"
+                        role="status"
+                        title={portMessage}
+                        class:success={portState === 'open'}
+                        class:warning={unsavedPort ||
+                          portState === 'closed' ||
+                          portState === 'error'}
+                        >{unsavedPort
+                          ? 'Save the new port before testing.'
+                          : portState === 'idle'
+                            ? 'Check whether peers can connect to you.'
+                            : portMessage}</small
                       ></span
                     ><button
                       type="button"
@@ -488,20 +500,6 @@
                           ? 'Test port'
                           : 'Test again'}{/if}</button
                     >
-                    {#if unsavedPort}<p class="inline-result">
-                        Save the new port before testing.
-                      </p>{:else if portState !== 'idle'}<p
-                        class="inline-result"
-                        role="status"
-                        class:success={portState === 'open'}
-                        class:warning={portState === 'closed' || portState === 'error'}
-                      >
-                        {#if portState === 'open'}<CheckCircle2
-                            size={15}
-                          />{:else if portState === 'closed' || portState === 'error'}<CircleAlert
-                            size={15}
-                          />{/if}{portMessage}
-                      </p>{/if}
                   </div>{/if}
                 {#if group.title === 'Blocklist' && draft['blocklist-enabled']}<div
                     class="setting-row blocklist-update-row"

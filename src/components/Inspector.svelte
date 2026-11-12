@@ -15,6 +15,7 @@
     Network,
     Pause,
     Play,
+    Square,
     RefreshCw,
     ShieldCheck,
     Tag,
@@ -28,6 +29,7 @@
   import { client } from '../lib/client.svelte';
   import { bytes, date, duration, percent, speed } from '../lib/format';
   import { stage } from '../lib/stage';
+  import { transferControl } from '../lib/transfer-control';
   import { fileTree, flatten, type FileNode } from '../lib/files';
   import type { Torrent } from '../lib/types';
   import PeerGraph from './PeerGraph.svelte';
@@ -83,7 +85,9 @@
   let labelEditing = $state(false);
   const tabs = ['Overview', 'Files', 'Peers', 'Trackers', 'Options'];
   let s = $derived(stage(t));
+  let control = $derived(transferControl(t));
   let tree = $derived(fileTree(t.files || []));
+  let hasFolders = $derived(tree.some((n) => n.children.length));
   let nodes = $derived(
     flatten(tree, fileQuery ? new Set() : collapsed).filter((n) =>
       n.path.toLowerCase().includes(fileQuery.toLowerCase()),
@@ -230,12 +234,7 @@
         ><ChevronLeft size={22} />Transfers</button
       >{:else}<span class="eyebrow">INSPECTOR</span>{/if}
     <div class="flex items-center gap-1">
-      <button
-        class="icon-button"
-        aria-label={t.status === 0 ? 'Resume selected torrent' : 'Pause selected torrent'}
-        onclick={() => client.safeAction(t.status === 0 ? 'torrent-start' : 'torrent-stop', [t.id])}
-        >{#if t.status === 0}<Play size={15} />{:else}<Pause size={15} />{/if}</button
-      >{#if !mobile}<button class="icon-button" aria-label="Close inspector" onclick={close}
+      {#if !mobile}<button class="icon-button" aria-label="Close inspector" onclick={close}
           ><X size={17} /></button
         >{/if}
     </div>
@@ -292,6 +291,33 @@
           ></span>
           <h3>{s.label}</h3>
           {#if s.progress !== undefined && t.percentDone < 1}<b>{percent(s.progress)}</b>{/if}
+          <div class="stage-actions">
+            <button
+              class="stage-control"
+              title={control.label}
+              aria-label={control.label}
+              onclick={() => client.safeAction(control.method, [t.id])}
+              >{#if control.icon === 'play'}<Play
+                  size={17}
+                />{:else if control.icon === 'stop'}<Square
+                  size={15}
+                  fill="currentColor"
+                />{:else}<Pause size={17} />{/if}{#if t.percentDone >= 1}<span>{control.label}</span
+                >{/if}</button
+            >
+            {#if client.fullSpeedAvailable && t.percentDone < 1}<button
+                class="button full-speed-button"
+                class:enabled={client.isFullSpeed(t)}
+                aria-pressed={client.isFullSpeed(t)}
+                title="Bypass automatic bandwidth limits"
+                onclick={() => client.fullSpeed(t)}
+                ><Zap size={17} />{client.isFullSpeed(t)
+                  ? client.fullSpeedApplied(t)
+                    ? 'Full speed on'
+                    : 'Applying…'
+                  : 'Full speed'}</button
+              >{/if}
+          </div>
         </div>
         <p>{t.errorString || s.detail}</p>
         {#if t.percentDone < 1}<div
@@ -301,30 +327,6 @@
             <span style={`width:${(s.progress || 0) * 100}%`}></span>
           </div>{/if}
       </section>
-      <div class="torrent-primary-actions">
-        <button
-          class="button secondary"
-          onclick={() =>
-            client.safeAction(t.status === 0 ? 'torrent-start' : 'torrent-stop', [t.id])}
-          >{#if t.status === 0}<Play size={17} />Resume{:else}<Pause size={17} />Pause{/if}</button
-        >
-        {#if client.fullSpeedAvailable && t.percentDone < 1}<button
-            class="button full-speed-button"
-            class:enabled={client.isFullSpeed(t)}
-            aria-pressed={client.isFullSpeed(t)}
-            onclick={() => client.fullSpeed(t)}
-            ><Zap size={17} />{client.isFullSpeed(t)
-              ? client.fullSpeedApplied(t)
-                ? 'Full speed on'
-                : 'Applying…'
-              : 'Full speed'}</button
-          >{/if}
-      </div>
-      {#if client.fullSpeedAvailable && t.percentDone < 1}<p class="action-caption">
-          {client.isFullSpeed(t)
-            ? 'Automatic bandwidth control is bypassed. Turn off Full speed to restore it.'
-            : 'Full speed bypasses automatic bandwidth control for this download.'}
-        </p>{/if}
       <section class="detail-section">
         <div class="section-heading">
           <h3>Activity</h3>
@@ -372,7 +374,7 @@
             >{/each}
         </div>{/if}
       <details class="detail-disclosure">
-        <summary>Torrent details <ChevronRight size={16} /></summary>
+        <summary><ChevronRight size={15} />Torrent details</summary>
         <dl class="properties">
           <div>
             <dt>Added</dt>
@@ -409,7 +411,7 @@
         </div>
       </details>
       <details class="detail-disclosure">
-        <summary>Storage & labels <ChevronRight size={16} /></summary>
+        <summary><ChevronRight size={15} />Storage & labels</summary>
         <p class="break-path mono">{t.downloadDir}</p>
         <button
           class="button secondary"
@@ -429,20 +431,9 @@
             aria-label="Filter files"
             placeholder="Filter files…"
             bind:value={fileQuery}
-          />{#if !fileQuery && tree.some((n) => n.children.length)}<button
-              class="text-button desktop-tree-action"
-              onclick={() => (collapsed = new Set())}>Expand</button
-            ><button
-              class="text-button desktop-tree-action"
-              onclick={() =>
-                (collapsed = new Set(
-                  flatten(tree, new Set())
-                    .filter((n) => n.children.length)
-                    .map((n) => n.path),
-                ))}>Collapse</button
-            >
+          />{#if !fileQuery && hasFolders}
             <button
-              class="icon-button mobile-tree-action"
+              class="icon-button tree-fold-action"
               aria-label={collapsed.size ? 'Expand all folders' : 'Collapse all folders'}
               onclick={() =>
                 (collapsed = collapsed.size
@@ -455,7 +446,7 @@
               >{#if collapsed.size}<FolderOpen size={19} />{:else}<Folder size={19} />{/if}</button
             >{/if}
         </div>
-        <div class="file-tree" role="tree" aria-label="Torrent files">
+        <div class="file-tree" class:flat={!hasFolders} role="tree" aria-label="Torrent files">
           {#each nodes as n (n.path)}<div
               role="treeitem"
               data-path={n.path}
@@ -503,34 +494,35 @@
                     if (n.children.length) toggleFolder(n.path);
                     else fileOptions(n);
                   }}
-                  >{#if n.children.length}{#if collapsed.has(n.path)}<ChevronRight
-                        size={13}
-                      />{:else}<ChevronDown size={13} />{/if}<Folder size={16} />{:else}<span
-                      class="file-leaf-indent"
-                      aria-hidden="true"
-                    ></span><File size={16} />{/if}<span>{n.name}</span></button
-                >{#if fileQuery && n.path.includes('/')}<small class="file-path"
+                  >{#if hasFolders}<span class="tree-disclosure"
+                      >{#if n.children.length}{#if collapsed.has(n.path)}<ChevronRight
+                            size={12}
+                          />{:else}<ChevronDown size={12} />{/if}{/if}</span
+                    >{/if}{#if n.children.length}<Folder size={16} />{:else}<File
+                      size={16}
+                    />{/if}<span>{n.name}</span></button
+                >
+                {#if fileQuery && n.path.includes('/')}<small class="file-path"
                     >{#each n.path
                       .slice(0, n.path.lastIndexOf('/'))
-                      .split('/') as part, i}{#if i > 0}<span aria-hidden="true"> / </span><wbr
+                      .split('/') as part, i}{#if i > 0}<span> / </span><wbr
                         />{/if}{part}{/each}</small
-                  >{/if}<small class="file-meta"
-                  >{bytes(n.length)} · {percent(
-                    n.length ? n.completed / n.length : 1,
-                  )}{#if priority(n) !== 0}<span class="mobile-file-priority">
-                      · {priority(n) === 1 ? 'High priority' : 'Low priority'}</span
-                    >{/if}</small
-                >
+                  >{/if}
               </div>
-              <select
-                class="file-priority"
-                tabindex={fileFocus === n.path ? 0 : -1}
-                aria-label={`Priority for ${n.path}`}
-                value={priority(n)}
-                onchange={(e) => setPriority(n, Number(e.currentTarget.value))}
-                ><option value={-1}>Low</option><option value={0}>Normal</option><option value={1}
-                  >High</option
-                ></select
+              <span class="file-meta"
+                >{#if priority(n) !== 0}<span
+                    class="file-priority-mark"
+                    title={priority(n) === 1 ? 'High priority' : 'Low priority'}
+                    >{#if priority(n) === 1}<ArrowUp size={13} />{:else}<ArrowDown
+                        size={13}
+                      />{/if}</span
+                  >{/if}{n.children.length
+                  ? `${n.ids.length} files`
+                  : bytes(n.length)}{#if !n.children.length && n.completed < n.length}<span
+                    class="file-completion"
+                  >
+                    · {percent(n.length ? n.completed / n.length : 1)}</span
+                  >{/if}</span
               >
               <button
                 class="icon-button file-actions"
@@ -595,21 +587,25 @@
         </div>
       {/if}
     {:else if tab === 'Trackers'}
-      <div class="section-heading">
+      <div class="section-heading tracker-toolbar">
         <h3>Peer discovery</h3>
-        <button
-          class="icon-button"
-          aria-label="Reannounce torrent"
-          title="Ask trackers for peers"
-          onclick={() => client.safeAction('torrent-reannounce', [t.id])}
-          ><RefreshCw size={14} /></button
-        ><button
-          class="text-button"
-          onclick={() => {
-            trackerText = t.trackerList || t.trackerStats.map((x) => x.announce).join('\n');
-            trackerEditing = true;
-          }}>Edit trackers</button
-        >
+        <div class="section-actions">
+          <button
+            class="icon-button"
+            aria-label="Reannounce torrent"
+            title="Ask trackers for peers"
+            onclick={() => client.safeAction('torrent-reannounce', [t.id])}
+            ><RefreshCw size={14} /></button
+          ><button
+            class="text-button"
+            onclick={() => {
+              trackerText = t.trackerList || t.trackerStats.map((x) => x.announce).join('\n');
+              trackerEditing = true;
+            }}
+            title="Edit trackers"
+            aria-label="Edit trackers"><MoreHorizontal size={18} /></button
+          >
+        </div>
       </div>
       {#each t.trackerStats || [] as tracker (tracker.id)}
         {@const failed = tracker.lastAnnounceTime > 0 && !tracker.lastAnnounceSucceeded}
@@ -803,6 +799,9 @@
       }}
     >
       <p class="file-option-path">{rename.path}</p>
+      <p class="file-option-meta">
+        {bytes(rename.length)} · {percent(rename.length ? rename.completed / rename.length : 1)} downloaded
+      </p>
       <label
         >Download priority<select
           aria-label="Download priority"

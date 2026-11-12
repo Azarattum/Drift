@@ -154,7 +154,10 @@ try {
   await page.waitForTimeout(220);
   await page.locator('[role="tab"]').nth(1).click();
   await page.locator('[role="tree"]').waitFor();
-  assert.equal(await page.locator('.file-priority').first().inputValue(), '0');
+  await page.locator('.file-actions').first().click();
+  assert.equal(await page.locator('select[aria-label="Download priority"]').inputValue(), '0');
+  await page.locator('[aria-label="Close dialog"]').click();
+  await page.locator('dialog').waitFor({ state: 'detached' });
   await page.locator('input[aria-label="Download Ubuntu 24.04"]').check();
   await page.waitForFunction(() => document.querySelector('[role="tree"]') !== null);
   assert(

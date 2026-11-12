@@ -31,6 +31,12 @@
     ListFilter,
     Moon,
     Monitor,
+    Square,
+    ChevronsUp,
+    ChevronsDown,
+    ArrowUpToLine,
+    ArrowDownToLine as MoveToBottom,
+    WifiOff,
     MoreHorizontal,
     Pause,
     Play,
@@ -46,6 +52,7 @@
   } from '@lucide/svelte';
   import { client } from './lib/client.svelte';
   import { bytes, speed } from './lib/format';
+  import { transferControl } from './lib/transfer-control';
   import type { Filter, Torrent } from './lib/types';
   import TorrentRow from './components/TorrentRow.svelte';
   import SpeedGraph from './components/SpeedGraph.svelte';
@@ -87,6 +94,9 @@
   let activeTitle = $derived(filters.find((f) => f.id === client.filter)?.label || 'Transfers');
   let selectedTorrents = $derived(client.torrents.filter((t) => client.selected.includes(t.id)));
   let anyRunning = $derived(selectedTorrents.some((t) => t.status !== 0));
+  let allComplete = $derived(
+    selectedTorrents.length > 0 && selectedTorrents.every((t) => t.percentDone >= 1),
+  );
   let dragDepth = 0;
   let systemDark = $state(matchMedia('(prefers-color-scheme: dark)').matches);
   let dark = $derived(theme === 'dark' || (theme === 'system' && systemDark));
@@ -454,14 +464,11 @@
           ><Settings size={16} /><span>Settings</span><kbd>⌘ ,</kbd></button
         >
         <div class="sidebar-footer">
-          <span class="server-status"
-            ><i class:connected={client.online}></i>{client.online
-              ? 'Connected'
-              : client.ready
-                ? 'Reconnecting'
-                : client.startupFailed
-                  ? 'Disconnected'
-                  : 'Connecting'}</span
+          <button
+            class="icon-button"
+            aria-label="Open bandwidth settings"
+            title="Bandwidth settings"
+            onclick={() => openSettings('Limits')}><Gauge size={16} /></button
           ><button
             class="icon-button"
             title={`Theme: ${theme}`}
@@ -510,8 +517,8 @@
       </header>
       <div class="mobile-page-scroll activity-page">
         <SpeedGraph
-          serverHistory={client.historyOnServer}
-          online={client.online}
+          downloadSpeed={client.stats.downloadSpeed}
+          uploadSpeed={client.stats.uploadSpeed}
           samples={client.samples}
           expanded
         />
@@ -545,6 +552,15 @@
       <header class="topbar">
         <div class="heading-left">
           <h1>{activeTitle}</h1>
+          {#if client.ready && !client.online}<button
+              class="connection-state"
+              aria-label="Connection lost. Retry"
+              title={`${client.error}. Showing last received data. Click to retry.`}
+              onclick={() => client.poll(true)}
+              ><WifiOff size={15} /><span role="alert"
+                >Reconnecting · showing last received data</span
+              ></button
+            >{/if}
           {#if client.ready}<span class="count-badge">{client.visible.length}</span>{/if}
         </div>
         <div class="topbar-actions">
@@ -569,22 +585,11 @@
           >
         </div>
       </header>
-      {#if client.error && (client.ready || client.startupFailed)}<div
-          class="connection-error"
-          role="alert"
-        >
-          <CircleAlert size={15} /><span
-            >{client.error}{#if client.ready}
-              · Showing last received data{/if}</span
-          ><button class="text-button" onclick={() => client.poll(true)}>Retry</button><button
-            class="text-button"
-            onclick={() => openSettings()}>Connection settings</button
-          >
-        </div>{/if}
+
       {#if client.ready}<div class="graph-wrap">
           <SpeedGraph
-            serverHistory={client.historyOnServer}
-            online={client.online}
+            downloadSpeed={client.stats.downloadSpeed}
+            uploadSpeed={client.stats.uploadSpeed}
             samples={client.samples}
           />
         </div>{/if}
@@ -594,11 +599,14 @@
           ><button
             class="text-button"
             onclick={() => run(anyRunning ? 'torrent-stop' : 'torrent-start')}
-            >{#if anyRunning}<Pause size={13} />Pause{:else}<Play size={13} />Resume{/if}</button
+            >{#if allComplete && anyRunning}<Square size={13} fill="currentColor" />Stop seeding{:else if allComplete}<Play
+                size={13}
+              />Start seeding{:else if anyRunning}<Pause size={13} />Pause{:else}<Play
+                size={13}
+              />Resume{/if}</button
           ><button class="text-button danger" onclick={requestRemove}
             ><Trash2 size={13} />Remove</button
-          ><button class="text-button" onclick={() => (client.selected = [])}>Clear</button
-          >{:else}<span class="eyebrow">TRANSFERS</span>{/if}
+          ><button class="text-button" onclick={() => (client.selected = [])}>Clear</button>{/if}
         {#if mobile}<button
             class="mobile-filter"
             aria-label="Filter transfers"
@@ -629,13 +637,19 @@
               menu={openMenu}
             />
           </div>{:else}<div class="empty-library">
-            {#if !client.ready}<span class="loading-ring"></span>
-              <h2>{client.startupFailed ? 'Unable to connect' : 'Connecting to Transmission'}</h2>
-              <p>
-                {client.startupFailed
-                  ? 'Open settings to check your connection.'
-                  : 'Your transfers will appear here.'}
-              </p>{:else if client.query || client.labelFilter}<Search size={28} />
+            {#if !client.ready}{#if client.startupFailed}<WifiOff size={28} />
+                <h2>Unable to connect</h2>
+                <p role="alert">{client.error}</p>
+                <div class="empty-actions">
+                  <button class="button" onclick={() => client.poll(true)}
+                    ><RefreshCw size={16} />Retry</button
+                  ><button class="button" onclick={() => openSettings()}>Connection settings</button
+                  >
+                </div>{:else}<span class="loading-ring"></span>
+                <h2>Connecting to Transmission</h2>
+                <p>
+                  Your transfers will appear here.
+                </p>{/if}{:else if client.query || client.labelFilter}<Search size={28} />
               <h2>No matching transfers</h2>
               <p>Try a different name, label, or folder.</p>
               <button
@@ -656,27 +670,6 @@
               >{/if}
           </div>{/each}
       </div>
-      <footer class="statusbar">
-        <span
-          >{client.torrents.length} transfer{client.torrents.length === 1 ? '' : 's'}<span
-            class="statusbar-size"
-          >
-            · {bytes(client.torrents.reduce((n, t) => n + t.sizeWhenDone, 0))}</span
-          ></span
-        >
-        <div>
-          <span class="download"><ArrowDown size={12} />{speed(client.stats.downloadSpeed)}</span
-          ><span class="upload"><ArrowUp size={12} />{speed(client.stats.uploadSpeed)}</span>
-        </div>
-        <button
-          class="text-button"
-          onclick={() => openSettings('Limits')}
-          aria-label="Open bandwidth settings"
-          ><Gauge size={13} /><span
-            >{client.session['alt-speed-enabled'] ? 'Slow mode' : 'Bandwidth'}</span
-          ></button
-        >
-      </footer>
     {/if}
   </main>
   {#if client.selected.length === 1 && client.focused && (!mobile || mobileSection === 'transfers')}<Inspector
@@ -691,6 +684,7 @@
 </div>
 
 {#snippet sortControl()}<div class="sort-control">
+    <span class="sort-label">Sort by</span>
     <select aria-label="Sort transfers" bind:value={client.sort}
       ><option value="addedDate">Date added</option><option value="name">Name</option><option
         value="rateDownload">Download speed</option
@@ -781,12 +775,29 @@
     <div class="menu-caption">
       {client.selected.length > 1 ? `${client.selected.length} transfers` : context.t.name}
     </div>
-    <button role="menuitem" onclick={() => run(anyRunning ? 'torrent-stop' : 'torrent-start')}
-      >{#if anyRunning}<Pause size={15} />Pause{:else}<Play size={15} />Resume{/if}<kbd>Space</kbd
-      ></button
-    ><button role="menuitem" onclick={() => run('torrent-start-now')}
-      ><Play size={15} />Start now <small>Skip queue</small></button
-    >
+    {#if client.selected.length === 1}{@const control = transferControl(context.t)}<button
+        role="menuitem"
+        onclick={() => run(control.method)}
+        >{#if control.icon === 'play'}<Play size={15} />{:else if control.icon === 'stop'}<Square
+            size={15}
+            fill="currentColor"
+          />{:else}<Pause size={15} />{/if}{control.label}<kbd>Space</kbd></button
+      >{:else}<button
+        role="menuitem"
+        onclick={() => run(anyRunning ? 'torrent-stop' : 'torrent-start')}
+        >{#if allComplete && anyRunning}<Square size={15} fill="currentColor" />Stop seeding{:else if allComplete}<Play
+            size={15}
+          />Start seeding{:else if anyRunning}<Pause size={15} />Pause downloads{:else}<Play
+            size={15}
+          />Resume downloads{/if}</button
+      >{/if}
+    {#if selectedTorrents.some((t) => t.status === 3 || t.status === 5)}<button
+        role="menuitem"
+        onclick={() => run('torrent-start-now')}
+        ><Play size={15} />{selectedTorrents.every((t) => t.percentDone >= 1)
+          ? 'Seed now'
+          : 'Download now'}<small>Skip queue</small></button
+      >{/if}
     {#if client.fullSpeedAvailable && client.selected.length === 1 && context.t.percentDone < 1}<button
         role="menuitem"
         class:full={client.isFullSpeed(context.t)}
@@ -823,17 +834,19 @@
     ><button role="menuitem" onclick={() => copy('hashString')}
       ><Copy size={15} />Copy info hash</button
     >
-    <div class="queue-actions">
-      <span>Queue</span><button
-        role="menuitem"
-        title="Move to top"
-        onclick={() => run('queue-move-top')}>Top</button
-      ><button role="menuitem" title="Move up" onclick={() => run('queue-move-up')}>↑</button
-      ><button role="menuitem" title="Move down" onclick={() => run('queue-move-down')}>↓</button
-      ><button role="menuitem" title="Move to bottom" onclick={() => run('queue-move-bottom')}
-        >Bottom</button
+    {#if selectedTorrents.some((t) => t.percentDone < 1 || t.status === 5)}<div
+        class="queue-actions"
       >
-    </div>
+        <span>Queue</span>
+        <div class="queue-buttons">
+          {#each [{ method: 'queue-move-top', label: 'Move to top', icon: ArrowUpToLine }, { method: 'queue-move-up', label: 'Move up', icon: ChevronsUp }, { method: 'queue-move-down', label: 'Move down', icon: ChevronsDown }, { method: 'queue-move-bottom', label: 'Move to bottom', icon: MoveToBottom }] as action}<button
+              role="menuitem"
+              title={action.label}
+              aria-label={action.label}
+              onclick={() => run(action.method)}><action.icon size={16} /></button
+            >{/each}
+        </div>
+      </div>{/if}
     <hr />
     <button role="menuitem" class="danger" onclick={requestRemove}
       ><Trash2 size={15} />Remove… <kbd>⌫</kbd></button

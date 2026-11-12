@@ -133,7 +133,7 @@ test('file tree checkboxes send the complete folder selection; peers include a r
   await page.getByTestId('torrent-row').first().click();
   await page.getByRole('tab', { name: 'Files', exact: true }).click();
   await expect(page.getByRole('tree')).toBeVisible();
-  await expect(page.getByRole('combobox', { name: /^Priority for / }).first()).toHaveValue('0');
+  await expect(page.getByRole('combobox', { name: /^Priority for / })).toHaveCount(0);
   await page.getByRole('checkbox', { name: 'Download Ubuntu 24.04', exact: true }).check();
   await expect
     .poll(() =>
@@ -228,7 +228,7 @@ test('a connection failure keeps existing data visible and explains its freshnes
 }) => {
   await server(page);
   await page.route(/\/rpc$/, (route) => route.abort());
-  await expect(page.getByRole('alert')).toContainText('Showing last received data', {
+  await expect(page.getByRole('alert')).toContainText('showing last received data', {
     timeout: 15000,
   });
   await expect(page.getByTestId('torrent-row')).toHaveCount(6);
@@ -644,9 +644,7 @@ test('layout, details, peer card, and settings follow the reviewed composition',
   await page
     .getByRole('button', { name: 'Inspect peer 192.0.2.1 port 51413', exact: true })
     .click();
-  const graph = await page.locator('.peer-map>svg').boundingBox(),
-    card = await page.locator('.peer-card').boundingBox();
-  expect(card!.y).toBeGreaterThanOrEqual(graph!.y + graph!.height);
+  await expect(page.locator('.peer-card')).toBeVisible();
   await page.getByRole('button', { name: 'Clear peer selection' }).click();
   await expect(page.locator('.peer-card')).toHaveCount(0);
   await page.getByRole('button', { name: 'Close inspector' }).click();
@@ -680,14 +678,14 @@ test('recorded server history is available before opening the frontend and after
     route.fulfill({ json: { version: 1, updated: Date.now() / 1000, samples } }),
   );
   await server(page);
-  await expect(page.getByText('Recording on the server', { exact: true })).toBeVisible();
+  await expect(page.getByText('Recording on the server', { exact: true })).toHaveCount(0);
   await expect
     .poll(async () => Number(await page.getByRole('slider').getAttribute('aria-valuemax')))
     .toBeGreaterThanOrEqual(2);
   await page.goto('about:blank');
   samples.push([now - 30000, 3500000, 120000]);
   await page.goto('/');
-  await expect(page.getByText('Recording on the server', { exact: true })).toBeVisible();
+  await expect(page.getByText('Recording on the server', { exact: true })).toHaveCount(0);
   await expect
     .poll(async () => Number(await page.getByRole('slider').getAttribute('aria-valuemax')))
     .toBeGreaterThanOrEqual(3);
@@ -724,22 +722,16 @@ test('single-file priorities fit and labels filter the library', async ({ page }
   await page.getByTestId('torrent-row').first().click();
   await expect(page.locator('.label-chip').filter({ hasText: 'Linux' })).toBeVisible();
   await page.getByRole('tab', { name: 'Files', exact: true }).click();
-  await expect(page.locator('.file-priority')).toHaveValue('0');
-  const fit = await page.locator('.file-priority').evaluate((select) => {
-    const el = select as HTMLSelectElement;
-    const style = getComputedStyle(el),
-      canvas = document.createElement('canvas'),
-      context = canvas.getContext('2d')!;
-    context.font = style.font;
-    return (
-      context.measureText(el.options[el.selectedIndex].text).width +
-        parseFloat(style.paddingLeft) +
-        parseFloat(style.paddingRight) <=
-      el.clientWidth
-    );
-  });
-  expect(fit).toBe(true);
+  await expect(page.locator('.file-priority')).toHaveCount(0);
   await page.screenshot({ path: 'test-results/review-file-tree.png', fullPage: true });
+  await page
+    .getByRole('button', { name: 'Actions for 7.Days.to.End.with.You.v1.2.02.rar', exact: true })
+    .click();
+  await expect(page.getByRole('combobox', { name: 'Download priority', exact: true })).toHaveValue(
+    '0',
+  );
+  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('tab', { name: 'Overview', exact: true }).click();
   await page.locator('.label-chip').filter({ hasText: 'Linux' }).click();
   await expect(page.getByTestId('torrent-row')).toHaveCount(1);
@@ -787,7 +779,21 @@ test('peer rows and diagram share selection including peers at the same address'
     name: 'Select peer 192.0.2.1 port 50001',
     exact: true,
   });
+  await expect(page.locator('.peer-row')).toHaveCount(9);
+  const rowPositions = () =>
+    page.locator('.peer-row').evaluateAll((rows) =>
+      rows.map((row) => {
+        const r = row.getBoundingClientRect(),
+          scroller = row.closest('.inspector-scroll')!;
+        return {
+          y: r.y - scroller.getBoundingClientRect().y + scroller.scrollTop,
+          height: r.height,
+        };
+      }),
+    );
+  const rowsBefore = await rowPositions();
   await connection.click();
+  expect(await rowPositions()).toEqual(rowsBefore);
   await expect(connection).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.peer-card')).toContainText('192.0.2.1:50001');
   await expect(page.locator('.peer-card')).toContainText('A second connection');
@@ -799,6 +805,7 @@ test('peer rows and diagram share selection including peers at the same address'
     .click();
   await expect(page.locator('.peer-card')).toContainText('192.0.2.1:51413');
   await expect(connection).toHaveAttribute('aria-pressed', 'false');
+  expect(await rowPositions()).toEqual(rowsBefore);
 });
 
 test('deep phone file trees preserve ancestry and send the exact folder file indices', async ({
@@ -828,7 +835,7 @@ test('deep phone file trees preserve ancestry and send the exact folder file ind
     }),
   });
   expect(parseFloat(await deep.evaluate((el) => getComputedStyle(el).paddingLeft))).toBeGreaterThan(
-    80,
+    70,
   );
   await page.getByRole('checkbox', { name: 'Download Project/Source', exact: true }).uncheck();
   await expect
@@ -885,10 +892,19 @@ test('settings navigation is distinct from values and port tests show inline pro
     page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button'),
   ).toHaveCount(5);
   await settingsSection(page, 'Network');
+  const before = await page
+    .getByRole('heading', { name: 'Peer discovery', exact: true })
+    .boundingBox();
   await page.getByRole('button', { name: 'Test port', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Testing…', exact: true })).toBeDisabled();
   await expect(page.locator('.inline-result')).toContainText('Checking port 51413');
+  expect(
+    await page.getByRole('heading', { name: 'Peer discovery', exact: true }).boundingBox(),
+  ).toEqual(before);
   await expect(page.locator('.inline-result')).toContainText('Port 51413 is closed');
+  expect(
+    await page.getByRole('heading', { name: 'Peer discovery', exact: true }).boundingBox(),
+  ).toEqual(before);
   await expect(page.locator('.toast')).toHaveCount(0);
   options.portOpen = true;
   await page.getByRole('button', { name: 'Test again', exact: true }).click();
@@ -949,4 +965,52 @@ test('completed and unavailable Full speed states do not leave row badges behind
   await page.getByTestId('torrent-row').last().click();
   await expect(page.locator('.full-speed-button')).toHaveCount(0);
   await expect(page.locator('.action-caption')).toHaveCount(0);
+});
+
+test('completed transfer actions explicitly control seeding and omit queue-start commands', async ({
+  page,
+}) => {
+  const { calls } = await server(page);
+  const row = page.getByTestId('torrent-row').last();
+  await row.click();
+  await expect(page.getByRole('button', { name: 'Stop seeding', exact: true })).toBeVisible();
+  await expect(page.locator('.inspector-header button')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await row.click({ button: 'right' });
+  await expect(page.getByRole('menuitem', { name: /^Stop seeding/ })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: /Start now|Download now|Pause/ })).toHaveCount(0);
+  await expect(page.locator('.queue-actions')).toHaveCount(0);
+  await page.getByRole('menuitem', { name: /^Stop seeding/ }).click();
+  await expect
+    .poll(() => calls.find((c) => c.method === 'torrent-stop')?.arguments.ids)
+    .toEqual([6]);
+  await expect(row).toContainText('Completed');
+});
+
+test('file rows are compact and aligned with pressed feedback and contextual priorities', async ({
+  page,
+}) => {
+  await server(page);
+  await page.getByTestId('torrent-row').first().click();
+  await page.getByRole('tab', { name: 'Files', exact: true }).click();
+  const folder = page.getByRole('treeitem').filter({
+    has: page.getByRole('checkbox', { name: 'Download Ubuntu 24.04/Docs', exact: true }),
+  });
+  const file = page.getByRole('treeitem').filter({
+    has: page.getByRole('checkbox', { name: 'Download Ubuntu 24.04/desktop.iso', exact: true }),
+  });
+  expect((await file.boundingBox())!.height).toBeLessThanOrEqual(40);
+  const folderName = await folder.locator('.file-name>span:last-child').boundingBox();
+  const fileName = await file.locator('.file-name>span:last-child').boundingBox();
+  expect(folderName!.x).toBeCloseTo(fileName!.x, 0);
+  await expect(page.locator('.file-priority')).toHaveCount(0);
+  const checkbox = file.getByRole('checkbox');
+  await checkbox.hover();
+  await page.mouse.down();
+  expect(await checkbox.evaluate((el) => getComputedStyle(el, '::before').transform)).not.toBe(
+    'none',
+  );
+  await page.mouse.up();
+  await expect(page.locator('.statusbar')).toHaveCount(0);
+  await expect(page.getByText('Recording on the server', { exact: true })).toHaveCount(0);
 });

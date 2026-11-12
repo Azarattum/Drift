@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowDown, ArrowUp, Activity, Clock3 } from '@lucide/svelte';
+  import { ArrowDown, ArrowUp, Activity } from '@lucide/svelte';
   import { LineChart } from 'layerchart/svg';
   import { scaleTime } from 'd3-scale';
   import { curveMonotoneX } from 'd3-shape';
@@ -9,14 +9,14 @@
   let {
     samples,
     expanded = false,
-    serverHistory = false,
-    online = true,
+    downloadSpeed,
+    uploadSpeed,
   }: {
     samples: Sample[];
     compact?: boolean;
     expanded?: boolean;
-    serverHistory?: boolean;
-    online?: boolean;
+    downloadSpeed?: number;
+    uploadSpeed?: number;
   } = $props();
   let windowMinutes = $state(2);
   let width = $state(700);
@@ -50,7 +50,15 @@
   let domain = $derived([new Date(end - windowMinutes * 60000), new Date(end)]);
 
   let hasActivity = $derived(data.some((s) => s.down > 0 || s.up > 0));
-  let current = $derived(samples[keyboardIndex ?? samples.length - 1]);
+  let current = $derived(
+    keyboardIndex !== null
+      ? samples[keyboardIndex]
+      : {
+          at: last?.at ?? Date.now(),
+          down: downloadSpeed ?? last?.down ?? 0,
+          up: uploadSpeed ?? last?.up ?? 0,
+        },
+  );
   const time = (value: Date | number) =>
     new Date(value).toLocaleTimeString([], {
       hour: '2-digit',
@@ -148,13 +156,4 @@
           : 'No recorded activity in this period.'}</span
       >
     </div>{/if}
-  <div class="history-status">
-    <Clock3 size={13} /><span
-      >{!online
-        ? `Offline · last update ${last ? time(last.at) : 'unavailable'}`
-        : serverHistory
-          ? 'Recording on the server'
-          : 'History from this browser'}</span
-    >
-  </div>
 </section>

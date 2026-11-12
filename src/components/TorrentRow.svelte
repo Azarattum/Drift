@@ -10,11 +10,13 @@
     MoreHorizontal,
     Pause,
     Play,
+    Square,
     Zap,
   } from '@lucide/svelte';
   import { client } from '../lib/client.svelte';
   import { bytes, duration, percent, speed } from '../lib/format';
   import { stage } from '../lib/stage';
+  import { transferControl } from '../lib/transfer-control';
   import type { Torrent } from '../lib/types';
   let {
     torrent: t,
@@ -29,6 +31,7 @@
   } = $props();
   let s = $derived(stage(t));
   let full = $derived(client.isFullSpeed(t));
+  let control = $derived(transferControl(t));
 </script>
 
 <div
@@ -111,30 +114,34 @@
     </div>
   </div>
   <div class="row-stage-detail muted" title={s.detail}>{t.errorString || s.detail}</div>
-  <div class="row-speeds">
-    {#if t.rateDownload > 0}<span class="download" title="Download speed"
-        ><ArrowDown size={16} />{speed(t.rateDownload)}</span
-      >{/if}
-    {#if t.rateUpload > 0}<span class="upload" title="Upload speed"
-        ><ArrowUp size={16} />{speed(t.rateUpload)}</span
-      >{/if}
+  <div class="row-metrics">
+    <div class="row-speeds">
+      {#if t.rateDownload > 0}<span class="download" title="Download speed"
+          ><ArrowDown size={16} />{speed(t.rateDownload)}</span
+        >{/if}
+      {#if t.rateUpload > 0}<span class="upload" title="Upload speed"
+          ><ArrowUp size={16} />{speed(t.rateUpload)}</span
+        >{/if}
+    </div>
+    {#if t.status === 4 && t.rateDownload > 0 && t.percentDone < 1 && t.eta >= 0}<div
+        class="row-eta muted"
+      >
+        {duration(t.eta)} left
+      </div>{/if}
   </div>
-  {#if t.status === 4 && t.rateDownload > 0 && t.percentDone < 1 && t.eta >= 0}<div
-      class="row-eta muted"
-    >
-      {duration(t.eta)} left
-    </div>{/if}
   <div class="row-actions">
     <button
       class="icon-button row-toggle"
       disabled={!client.online || client.busy.has(t.id)}
-      aria-label={`${t.status === 0 ? 'Resume' : 'Pause'} ${t.name}`}
-      title={t.status === 0 ? 'Resume' : 'Pause'}
+      aria-label={`${control.label} ${t.name}`}
+      title={control.label}
       onclick={(e) => {
         e.stopPropagation();
-        void client.safeAction(t.status === 0 ? 'torrent-start' : 'torrent-stop', [t.id]);
+        void client.safeAction(control.method, [t.id]);
       }}
-      >{#if t.status === 0}<Play size={15} />{:else}<Pause size={15} />{/if}</button
+      >{#if control.icon === 'play'}<Play size={15} />{:else if control.icon === 'stop'}<Square
+          size={15}
+        />{:else}<Pause size={15} />{/if}</button
     >{#if client.fullSpeedAvailable && t.percentDone < 1}<button
         class="icon-button row-boost"
         class:full
