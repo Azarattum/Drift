@@ -3650,7 +3650,7 @@ dialog.player-dialog {
   padding: 0;
 }
 .player-dialog .modal-header {
-  padding: 16px 22px 0;
+  padding: 8px 20px;
   margin: 0;
 }
 .player-dialog .modal-header h2 {
@@ -3663,13 +3663,13 @@ dialog.player-dialog {
 .player-dialog .modal-header .icon-button {
   width: 44px;
   height: 44px;
-  margin: -8px -10px -8px 0;
+  margin: 0;
 }
 .watch-heading {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 17px 22px 22px;
+  padding: 20px;
 }
 .watch-mark {
   display: grid;
@@ -4170,7 +4170,7 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
     border-radius: 12px;
   }
   .player-dialog .modal-header {
-    padding: 13px 16px 0;
+    padding: 8px 16px;
   }
   .watch-heading {
     padding: 16px;

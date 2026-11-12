@@ -173,9 +173,33 @@ test('multiple files, matching mobile theme, file switching and touch targets', 
 test('unavailable service has a useful retry state without losing the library', async ({
   page,
 }) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
   await setup(page, { unavailable: true });
   await expect(page.getByRole('alert')).toContainText('The media service is not available');
   await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+  await expect(page.locator('.player-dialog')).toHaveCSS('opacity', '1');
+  for (const width of [1104, 375]) {
+    await page.setViewportSize({ width, height: 800 });
+    const spacing = await page.locator('.player-dialog .modal-header').evaluate((header) => {
+      const bounds = header.getBoundingClientRect();
+      const close = header.querySelector('button')!.getBoundingClientRect();
+      const label = header.querySelector('h2')!.getBoundingClientRect();
+      return {
+        top: close.top - bounds.top,
+        bottom: bounds.bottom - close.bottom,
+        left: label.left - bounds.left,
+        right: bounds.right - close.right,
+        width: close.width,
+        height: close.height,
+      };
+    });
+    expect(spacing.top).toBeGreaterThanOrEqual(8);
+    expect(spacing.bottom).toBeGreaterThanOrEqual(8);
+    expect(spacing.right).toBeCloseTo(spacing.left, 0);
+    expect(spacing.width).toBeGreaterThanOrEqual(44);
+    expect(spacing.height).toBeGreaterThanOrEqual(44);
+    await page.screenshot({ path: `test-results/player-error-dark-${width}.png` });
+  }
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.locator('.torrent-row')).toHaveCount(1);
 });
