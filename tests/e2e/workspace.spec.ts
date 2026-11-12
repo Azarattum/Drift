@@ -1440,3 +1440,47 @@ test('hover actions hide metrics without moving them', async ({ page }) => {
   await expect(metrics).toHaveCSS('visibility', 'hidden');
   expect(await metrics.boundingBox()).toEqual(before);
 });
+
+test('peer headers sort in both directions and availability is vertically centered', async ({
+  page,
+}) => {
+  const { torrents } = await server(page);
+  const peers = torrents[0].peers!;
+  peers.splice(2);
+  peers[0].progress = 0.25;
+  peers[1].progress = 1;
+  peers[0].rateToClient = 100;
+  peers[1].rateToClient = 200;
+  peers[0].rateToPeer = 300;
+  peers[1].rateToPeer = 50;
+  await page.getByTestId('torrent-row').first().click();
+  await page.getByRole('tab', { name: /^Peers/ }).click();
+  await expect(page.locator('.peer-row')).toHaveCount(2);
+  for (const [name, first] of [
+    ['Has', peers[1]],
+    ['Download', peers[1]],
+    ['Upload', peers[0]],
+  ] as const) {
+    const header = page
+      .getByRole('columnheader')
+      .filter({ has: page.getByRole('button', { name, exact: true }) });
+    await header.getByRole('button').click();
+    await expect(header).toHaveAttribute('aria-sort', 'descending');
+    await expect(page.locator('.peer-row').first()).toHaveAttribute(
+      'data-peer',
+      `${first.address}:${first.port}`,
+    );
+    await header.getByRole('button').click();
+    await expect(header).toHaveAttribute('aria-sort', 'ascending');
+    await expect(page.locator('.peer-row').last()).toHaveAttribute(
+      'data-peer',
+      `${first.address}:${first.port}`,
+    );
+  }
+  const row = page.locator('.peer-row').first();
+  const bounds = await row.boundingBox();
+  const progress = await row.locator('.peer-progress').boundingBox();
+  expect(
+    Math.abs(progress!.y + progress!.height / 2 - (bounds!.y + bounds!.height / 2)),
+  ).toBeLessThan(2);
+});

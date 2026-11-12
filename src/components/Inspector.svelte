@@ -72,6 +72,36 @@
   let collapsed = $state(new Set<string>());
   let fileQuery = $state('');
   let chosenPeer = $state<string | null>(null);
+  type PeerSort = 'address' | 'progress' | 'rateToClient' | 'rateToPeer';
+  let peerSort = $state<PeerSort>('address');
+  let peerDescending = $state(false);
+  const peerColumns = [
+    { key: 'address', label: 'Peer / Client', hint: 'Sort by peer IP address' },
+    { key: 'progress', label: 'Has', hint: 'Percentage of this torrent available from the peer' },
+    {
+      key: 'rateToClient',
+      label: 'Download',
+      hint: 'Sort by current download speed from the peer',
+    },
+    { key: 'rateToPeer', label: 'Upload', hint: 'Sort by current upload speed to the peer' },
+  ] as const;
+  let sortedPeers = $derived(
+    [...(t.peers || [])].sort((a, b) => {
+      const result =
+        peerSort === 'address'
+          ? a.address.localeCompare(b.address, undefined, { numeric: true }) || a.port - b.port
+          : a[peerSort] - b[peerSort];
+      return (peerDescending ? -1 : 1) * result;
+    }),
+  );
+  function sortPeers(key: PeerSort) {
+    if (peerSort === key) peerDescending = !peerDescending;
+    else {
+      peerSort = key;
+      peerDescending = key !== 'address';
+    }
+  }
+
   function peerClient(name: string) {
     if (/qbittorrent/i.test(name)) return 'qB';
     if (/transmission/i.test(name)) return 'Tr';
@@ -665,12 +695,26 @@
         </div>
         <div class="table-scroll">
           <div class="peer-list">
-            {#if t.peers?.length}<div class="peer-columns" aria-hidden="true">
-                <span>Peer / Client</span><span>Progress</span><span>Download</span><span
-                  >Upload</span
-                >
+            {#if t.peers?.length}<div class="peer-columns" role="row">
+                {#each peerColumns as column}
+                  <div
+                    role="columnheader"
+                    aria-sort={peerSort === column.key
+                      ? peerDescending
+                        ? 'descending'
+                        : 'ascending'
+                      : 'none'}
+                  >
+                    <button title={column.hint} onclick={() => sortPeers(column.key)}>
+                      {column.label}
+                      {#if peerSort === column.key}
+                        {#if peerDescending}<ArrowDown size={12} />{:else}<ArrowUp size={12} />{/if}
+                      {/if}
+                    </button>
+                  </div>
+                {/each}
               </div>{/if}
-            {#each t.peers || [] as p (p.address + ':' + p.port)}<button
+            {#each sortedPeers as p (p.address + ':' + p.port)}<button
                 class="peer-row"
                 data-peer={`${p.address}:${p.port}`}
                 class:selected={chosenPeer === `${p.address}:${p.port}`}
@@ -692,7 +736,9 @@
                     >
                     <span>{p.port}</span><span>{p.isUTP ? 'µTP' : 'TCP'}</span>
                   </small></span
-                ><span>{percent(p.progress)}</span><span class="download"
+                ><span class="peer-progress" title="Percentage of the torrent this peer has"
+                  >{percent(p.progress)}</span
+                ><span class="download"
                   >{speed(p.rateToClient)}<small
                     >{p.bytes_to_client === undefined ? '—' : bytes(p.bytes_to_client)} received</small
                   ></span

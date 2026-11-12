@@ -3471,3 +3471,29 @@ input[type='number']::-webkit-outer-spin-button {
   padding: 20px 0;
   border-top: 1px solid var(--border);
 }
+
+.peer-columns button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  color: inherit;
+  font-size: inherit;
+  text-align: left;
+}
+.peer-columns button:hover {
+  color: var(--text);
+}
+.peer-row .peer-progress {
+  align-self: center;
+}
+@media (max-width: 760px) {
+  .peer-columns {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  .peer-columns button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
