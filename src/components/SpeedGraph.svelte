@@ -132,7 +132,7 @@
         yDomain={[0, Math.max(1, Math.ceil(peak / unit))]}
         yNice={true}
         height={expanded ? 270 : width < 500 ? 160 : 190}
-        padding={{ top: 14, right: 12, bottom: 28, left: width < 500 ? 66 : 76 }}
+        padding={{ top: 14, right: 16, bottom: 42, left: width < 500 ? 66 : 76 }}
         motion={motion(160) && data.length < 500 ? { type: 'tween', duration: 160 } : 'none'}
         props={{
           spline: {
@@ -141,6 +141,7 @@
             defined: (d: { gap?: boolean }) => !d.gap,
           },
           xAxis: {
+            tickLength: 12,
             ticks: width < 500 ? 3 : 5,
             format: tick,
             tickOcclusion: { padding: width < 500 ? 24 : 12, priority: 'start-end' },
