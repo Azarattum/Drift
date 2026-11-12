@@ -94,6 +94,20 @@
   let activeTitle = $derived(filters.find((f) => f.id === client.filter)?.label || 'Transfers');
   let selectedTorrents = $derived(client.torrents.filter((t) => client.selected.includes(t.id)));
   let anyRunning = $derived(selectedTorrents.some((t) => t.status !== 0));
+  let actionTorrents = $derived(
+    context && !client.selected.includes(context.t.id) ? [context.t] : selectedTorrents,
+  );
+  let actionAnyRunning = $derived(actionTorrents.some((t) => t.status !== 0));
+  let actionAllComplete = $derived(
+    actionTorrents.length > 0 && actionTorrents.every((t) => t.percentDone >= 1),
+  );
+  let pendingTorrents = $state<Torrent[]>([]);
+  let menuTrigger: HTMLElement | null = null;
+  function closeMenu() {
+    context = null;
+    if (menuTrigger?.isConnected) menuTrigger.focus({ preventScroll: true });
+  }
+
   let allComplete = $derived(
     selectedTorrents.length > 0 && selectedTorrents.every((t) => t.percentDone >= 1),
   );
@@ -163,7 +177,7 @@
     modal = 'add';
   }
   function openMenu(e: MouseEvent, t: Torrent) {
-    if (!client.selected.includes(t.id)) client.select(t);
+    menuTrigger = e.currentTarget as HTMLElement;
     const rect = (e.currentTarget as HTMLElement)?.getBoundingClientRect();
     context = {
       x: Math.min(Math.max(8, e.clientX || rect?.left || 8), innerWidth - 240),
@@ -174,23 +188,41 @@
       const menu = document.querySelector<HTMLElement>('.context-menu');
       if (context && menu && !mobile) {
         const bounds = menu.getBoundingClientRect();
+        const anchored = menuTrigger?.classList.contains('row-menu') && rect;
         context = {
           ...context,
-          x: Math.max(8, Math.min(context.x, innerWidth - bounds.width - 8)),
-          y: Math.max(8, Math.min(context.y, innerHeight - bounds.height - 8)),
+          x: Math.max(
+            8,
+            Math.min(
+              anchored ? rect.right - bounds.width : context.x,
+              innerWidth - bounds.width - 8,
+            ),
+          ),
+          y: Math.max(
+            8,
+            Math.min(
+              anchored
+                ? rect.bottom + 6 + bounds.height <= innerHeight - 8
+                  ? rect.bottom + 6
+                  : rect.top - bounds.height - 6
+                : context.y,
+              innerHeight - bounds.height - 8,
+            ),
+          ),
         };
       }
       menu?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
     });
   }
   function requestRemove() {
-    if (!client.selected.length) return;
+    if (!actionTorrents.length) return;
+    pendingTorrents = [...actionTorrents];
     deleteData = false;
     modal = 'remove';
     context = null;
   }
   async function copy(kind: 'magnetLink' | 'hashString') {
-    const text = selectedTorrents
+    const text = actionTorrents
       .map((t) =>
         kind === 'hashString'
           ? t.hashString
@@ -201,8 +233,9 @@
     await client.copy(text);
   }
   function run(method: string) {
-    context = null;
-    void client.safeAction(method);
+    const ids = actionTorrents.map((t) => t.id);
+    closeMenu();
+    if (ids.length) void client.safeAction(method, ids);
   }
   async function add() {
     adding = true;
@@ -502,6 +535,16 @@
             ? { Limits: 'Bandwidth', Transfers: 'Downloads' }[settingsTab] || settingsTab
             : 'Settings'}
         </h1>
+        {#if mobileSettingsDetail && settingsTab !== 'Appearance'}<button
+            class="settings-save"
+            aria-label={settingsTab === 'Connection' ? 'Connect' : 'Save changes'}
+            disabled={saving || (settingsTab !== 'Connection' && !client.online)}
+            onclick={() =>
+              document
+                .querySelector<HTMLButtonElement>('.settings-mobile .settings-submit')
+                ?.click()}
+            >{saving ? 'Saving…' : settingsTab === 'Connection' ? 'Connect' : 'Save'}</button
+          >{/if}
       </header>
       <div class="mobile-page-scroll mobile-settings">{@render settingsContent()}</div>
     {:else if mobile && mobileSection === 'activity'}
@@ -635,6 +678,7 @@
                 client.select(t);
               }}
               menu={openMenu}
+              menuOpen={context?.t.id === t.id}
             />
           </div>{:else}<div class="empty-library">
             {#if !client.ready}{#if client.startupFailed}<WifiOff size={28} />
@@ -747,7 +791,7 @@
   <button
     class="context-scrim"
     aria-label="Dismiss context menu"
-    onclick={() => (context = null)}
+    onclick={closeMenu}
     oncontextmenu={(e) => {
       e.preventDefault();
       context = null;
@@ -761,7 +805,12 @@
     style={`left:${context.x}px;top:${context.y}px`}
     transition:fly={{ y: -4, duration: motion(100) }}
     onkeydown={(e) => {
-      if (e.key === 'Escape') context = null;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        closeMenu();
+        return;
+      }
       if (['ArrowDown', 'ArrowUp'].includes(e.key)) {
         e.preventDefault();
         const items = [
@@ -773,9 +822,9 @@
     }}
   >
     <div class="menu-caption">
-      {client.selected.length > 1 ? `${client.selected.length} transfers` : context.t.name}
+      {actionTorrents.length > 1 ? `${actionTorrents.length} transfers` : context.t.name}
     </div>
-    {#if client.selected.length === 1}{@const control = transferControl(context.t)}<button
+    {#if actionTorrents.length === 1}{@const control = transferControl(context.t)}<button
         role="menuitem"
         onclick={() => run(control.method)}
         >{#if control.icon === 'play'}<Play size={15} />{:else if control.icon === 'stop'}<Square
@@ -784,21 +833,20 @@
           />{:else}<Pause size={15} />{/if}{control.label}<kbd>Space</kbd></button
       >{:else}<button
         role="menuitem"
-        onclick={() => run(anyRunning ? 'torrent-stop' : 'torrent-start')}
-        >{#if allComplete && anyRunning}<Square size={15} fill="currentColor" />Stop seeding{:else if allComplete}<Play
+        onclick={() => run(actionAnyRunning ? 'torrent-stop' : 'torrent-start')}
+        >{#if actionAllComplete && actionAnyRunning}<Square size={15} fill="currentColor" />Stop
+          seeding{:else if actionAllComplete}<Play size={15} />Start seeding{:else if actionAnyRunning}<Pause
             size={15}
-          />Start seeding{:else if anyRunning}<Pause size={15} />Pause downloads{:else}<Play
-            size={15}
-          />Resume downloads{/if}</button
+          />Pause downloads{:else}<Play size={15} />Resume downloads{/if}</button
       >{/if}
-    {#if selectedTorrents.some((t) => t.status === 3 || t.status === 5)}<button
+    {#if actionTorrents.some((t) => t.status === 3 || t.status === 5)}<button
         role="menuitem"
         onclick={() => run('torrent-start-now')}
-        ><Play size={15} />{selectedTorrents.every((t) => t.percentDone >= 1)
+        ><Play size={15} />{actionTorrents.every((t) => t.percentDone >= 1)
           ? 'Seed now'
           : 'Download now'}<small>Skip queue</small></button
       >{/if}
-    {#if client.fullSpeedAvailable && client.selected.length === 1 && context.t.percentDone < 1}<button
+    {#if client.fullSpeedAvailable && actionTorrents.length === 1 && context.t.percentDone < 1}<button
         role="menuitem"
         class:full={client.isFullSpeed(context.t)}
         onclick={() => {
@@ -813,6 +861,7 @@
     <button
       role="menuitem"
       onclick={() => {
+        client.select(context!.t);
         context = null;
       }}><Info size={15} />Show details <kbd>↵</kbd></button
     ><button role="menuitem" onclick={() => run('torrent-verify')}
@@ -822,6 +871,7 @@
     ><button
       role="menuitem"
       onclick={() => {
+        pendingTorrents = [...actionTorrents];
         moveDir = context!.t.downloadDir;
         moveData = true;
         modal = 'move';
@@ -834,9 +884,7 @@
     ><button role="menuitem" onclick={() => copy('hashString')}
       ><Copy size={15} />Copy info hash</button
     >
-    {#if selectedTorrents.some((t) => t.percentDone < 1 || t.status === 5)}<div
-        class="queue-actions"
-      >
+    {#if actionTorrents.some((t) => t.percentDone < 1 || t.status === 5)}<div class="queue-actions">
         <span>Queue</span>
         <div class="queue-buttons">
           {#each [{ method: 'queue-move-top', label: 'Move to top', icon: ArrowUpToLine }, { method: 'queue-move-up', label: 'Move up', icon: ChevronsUp }, { method: 'queue-move-down', label: 'Move down', icon: ChevronsDown }, { method: 'queue-move-bottom', label: 'Move to bottom', icon: MoveToBottom }] as action}<button
@@ -908,22 +956,26 @@
     </form></Modal
   >{/if}
 {#if modal === 'remove'}<Modal
-    title={`Remove ${client.selected.length === 1 ? 'transfer' : `${client.selected.length} transfers`}?`}
+    title={`Remove ${pendingTorrents.length === 1 ? 'transfer' : `${pendingTorrents.length} transfers`}?`}
     close={() => (modal = null)}
     ><form
       class="modal-form"
       onsubmit={async (e) => {
         e.preventDefault();
-        await client.safeAction('torrent-remove', client.selected, {
-          'delete-local-data': deleteData,
-        });
+        await client.safeAction(
+          'torrent-remove',
+          pendingTorrents.map((t) => t.id),
+          {
+            'delete-local-data': deleteData,
+          },
+        );
         modal = null;
       }}
     >
       <p class="remove-description">
-        {client.selected.length === 1
-          ? client.focused?.name
-          : `${client.selected.length} selected transfers`}
+        {pendingTorrents.length === 1
+          ? pendingTorrents[0]?.name
+          : `${pendingTorrents.length} selected transfers`}
       </p>
       <label class="check-row danger"
         ><input type="checkbox" bind:checked={deleteData} />Also delete downloaded files</label
@@ -945,10 +997,14 @@
       class="modal-form"
       onsubmit={async (e) => {
         e.preventDefault();
-        await client.safeAction('torrent-set-location', client.selected, {
-          location: moveDir,
-          move: moveData,
-        });
+        await client.safeAction(
+          'torrent-set-location',
+          pendingTorrents.map((t) => t.id),
+          {
+            location: moveDir,
+            move: moveData,
+          },
+        );
         modal = null;
       }}
     >

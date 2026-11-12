@@ -23,11 +23,13 @@
     selected,
     open,
     menu,
+    menuOpen = false,
   }: {
     torrent: Torrent;
     selected: boolean;
     open: () => void;
     menu: (e: MouseEvent, t: Torrent) => void;
+    menuOpen?: boolean;
   } = $props();
   let s = $derived(stage(t));
   let full = $derived(client.isFullSpeed(t));
@@ -37,6 +39,7 @@
 <div
   class="torrent-row"
   class:selected
+  class:menu-open={menuOpen}
   data-testid="torrent-row"
   role="option"
   aria-selected={selected}
@@ -45,10 +48,10 @@
   ondblclick={open}
   oncontextmenu={(e) => {
     e.preventDefault();
-    if (!selected) client.select(t);
     menu(e, t);
   }}
   onkeydown={(e) => {
+    if (e.target !== e.currentTarget) return;
     if (e.key === 'Enter') open();
     if (e.key === ' ') {
       e.preventDefault();
@@ -154,6 +157,8 @@
         }}><Zap size={16} /><span>Full speed</span></button
       >{/if}<button
       class="icon-button row-menu"
+      aria-haspopup="menu"
+      aria-expanded={menuOpen}
       aria-label={`Actions for ${t.name}`}
       onclick={(e) => {
         e.stopPropagation();

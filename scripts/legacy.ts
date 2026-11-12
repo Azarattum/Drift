@@ -155,6 +155,7 @@ try {
   await page.locator('[role="tab"]').nth(1).click();
   await page.locator('[role="tree"]').waitFor();
   await page.locator('.file-actions').first().click();
+  await page.locator('[role=menuitem]', { hasText: 'Rename…' }).click();
   assert.equal(await page.locator('select[aria-label="Download priority"]').inputValue(), '0');
   await page.locator('[aria-label="Close dialog"]').click();
   await page.locator('dialog').waitFor({ state: 'detached' });

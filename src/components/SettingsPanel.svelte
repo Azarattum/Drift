@@ -482,10 +482,12 @@
                           portState === 'closed' ||
                           portState === 'error'}
                         >{unsavedPort
-                          ? 'Save the new port before testing.'
+                          ? 'Save before testing.'
                           : portState === 'idle'
-                            ? 'Check whether peers can connect to you.'
-                            : portMessage}</small
+                            ? 'Test incoming connections.'
+                            : portState === 'error'
+                              ? 'Test failed. Try again.'
+                              : portMessage}</small
                       ></span
                     ><button
                       type="button"
@@ -524,7 +526,13 @@
         </form>
       {/if}
     </div>
-    {#if section !== 'Appearance'}<footer class="settings-commit">
+    {#if mobile && section !== 'Appearance'}<button
+        class="settings-submit"
+        hidden
+        type="submit"
+        form={formId}>Save</button
+      >{/if}
+    {#if !mobile && section !== 'Appearance'}<footer class="settings-commit">
         {#if section === 'Connection'}<span class="connection-badge"
             ><i class="status-dot" class:success={client.online}></i>Transmission {String(
               client.session.version || '—',

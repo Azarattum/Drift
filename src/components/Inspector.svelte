@@ -11,6 +11,9 @@
     Folder,
     FolderOpen,
     MoreHorizontal,
+    Pencil,
+    Check,
+    Minus,
     List,
     Network,
     Pause,
@@ -74,6 +77,29 @@
     if (tab && peerView && scrollPane) scrollPane.scrollTop = 0;
   });
   let rename = $state<FileNode | null>(null);
+  let fileContext = $state<{ node: FileNode; x: number; y: number } | null>(null);
+  let fileMenuTrigger: HTMLElement | null = null;
+  function openFileMenu(e: MouseEvent | KeyboardEvent, n: FileNode) {
+    e.preventDefault();
+    e.stopPropagation();
+    fileMenuTrigger = e.currentTarget as HTMLElement;
+    const rect = fileMenuTrigger.getBoundingClientRect();
+    const event = e as MouseEvent;
+    fileContext = {
+      node: n,
+      x: Math.max(8, Math.min(event.clientX || rect.left, innerWidth - 212)),
+      y: Math.max(8, Math.min(event.clientY || rect.bottom, innerHeight - 256)),
+    };
+    void tick().then(() =>
+      document
+        .querySelector<HTMLElement>('.file-context-menu button')
+        ?.focus({ preventScroll: true }),
+    );
+  }
+  function closeFileMenu() {
+    fileContext = null;
+    if (fileMenuTrigger?.isConnected) fileMenuTrigger.focus({ preventScroll: true });
+  }
   let renameValue = $state('');
   let trackerText = $state<string | null>(null);
   let trackerEditing = $state(false);
@@ -234,6 +260,13 @@
         ><ChevronLeft size={22} />Transfers</button
       >{:else}<span class="eyebrow">INSPECTOR</span>{/if}
     <div class="flex items-center gap-1">
+      {#if tab === 'Options'}<button
+          class="settings-save"
+          type="submit"
+          form={optionsFormId}
+          aria-label="Save changes"
+          disabled={saving || !client.online}>{saving ? 'Saving…' : 'Save'}</button
+        >{/if}
       {#if !mobile}<button class="icon-button" aria-label="Close inspector" onclick={close}
           ><X size={17} /></button
         >{/if}
@@ -454,22 +487,19 @@
               onfocus={() => (fileFocus = n.path)}
               onkeydown={(e) => {
                 fileKeys(e, n);
-                if (e.key === 'F2' || e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+                if (e.key === 'F2') {
                   e.preventDefault();
                   e.stopPropagation();
-                  rename = n;
-                  renameValue = n.name;
+                  fileOptions(n);
                 }
+                if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) openFileMenu(e, n);
               }}
-              oncontextmenu={(e) => {
-                e.preventDefault();
-                rename = n;
-                renameValue = n.name;
-              }}
+              oncontextmenu={(e) => openFileMenu(e, n)}
               aria-selected={checked(n)}
               aria-expanded={n.children.length ? !collapsed.has(n.path) : undefined}
               aria-level={n.depth + 1}
               class="file-node"
+              class:menu-open={fileContext?.node.path === n.path}
               style={`--depth:${fileQuery ? 0 : n.depth}`}
               class:folder={n.children.length > 0}
             >
@@ -528,7 +558,7 @@
                 class="icon-button file-actions"
                 tabindex={fileFocus === n.path ? 0 : -1}
                 aria-label={`Actions for ${n.path}`}
-                onclick={() => fileOptions(n)}><MoreHorizontal size={17} /></button
+                onclick={(e) => openFileMenu(e, n)}><MoreHorizontal size={17} /></button
               >
             </div>{/each}
           {#if !nodes.length}<div class="panel-empty">
@@ -603,7 +633,7 @@
               trackerEditing = true;
             }}
             title="Edit trackers"
-            aria-label="Edit trackers"><MoreHorizontal size={18} /></button
+            aria-label="Edit trackers"><Pencil size={18} /></button
           >
         </div>
       </div>
@@ -774,15 +804,58 @@
       </form>
     {/if}
   </div>
-  {#if tab === 'Options'}<footer class="inspector-commit">
-      <button
-        class="button primary"
-        type="submit"
-        form={optionsFormId}
-        disabled={saving || !client.online}>{saving ? 'Saving…' : 'Save changes'}</button
-      >
-    </footer>{/if}
 </aside>
+{#if fileContext}<button
+    class="context-scrim"
+    aria-label="Dismiss file menu"
+    onclick={closeFileMenu}
+  ></button>
+  <div
+    class="context-menu file-context-menu"
+    role="menu"
+    aria-label="File actions"
+    tabindex="-1"
+    style={`left:${fileContext.x}px;top:${fileContext.y}px`}
+    onkeydown={(e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        closeFileMenu();
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        e.stopPropagation();
+        const buttons = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('button')];
+        const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        buttons[(i + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
+      }
+    }}
+  >
+    <div class="menu-caption">Priority</div>
+    {#each [{ value: 1, label: 'High', icon: ArrowUp }, { value: 0, label: 'Normal', icon: Minus }, { value: -1, label: 'Low', icon: ArrowDown }] as item}<button
+        role="menuitemradio"
+        aria-checked={priority(fileContext.node) === item.value}
+        onclick={() => {
+          const node = fileContext!.node;
+          closeFileMenu();
+          void setPriority(node, item.value);
+        }}
+        ><item.icon size={15} /><span>{item.label}</span
+        >{#if priority(fileContext.node) === item.value}<Check
+            size={15}
+            class="menu-check"
+          />{/if}</button
+      >{/each}
+    <hr />
+    <button
+      role="menuitem"
+      onclick={() => {
+        const node = fileContext!.node;
+        closeFileMenu();
+        fileOptions(node);
+      }}><Pencil size={15} />Rename…</button
+    >
+  </div>{/if}
 {#if rename}<Modal
     title={rename.children.length ? 'Folder options' : 'File options'}
     close={() => (rename = null)}

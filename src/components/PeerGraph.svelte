@@ -119,10 +119,8 @@
             }
           }}
           onclick={() => (chosen = null)}><X size={16} /></button
-        ><b
-          >{selected.address.includes(':')
-            ? `[${selected.address}]:${selected.port}`
-            : `${selected.address}:${selected.port}`}</b
+        ><b title={selected.address}>{selected.address}</b><small class="peer-port"
+          >Port {selected.port}</small
         ><span
           >{selected.clientName || 'Unknown client'} · {percent(selected.progress)} complete</span
         >
