@@ -57,6 +57,7 @@
           role="button"
           tabindex="0"
           aria-label={`Inspect peer ${p.address}`}
+          aria-pressed={chosen === p.address}
           onkeydown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') e.preventDefault();
             if (e.key === 'Enter' || e.key === ' ')
@@ -70,6 +71,7 @@
           onclick={() => (chosen = chosen === p.address ? null : p.address)}
         >
           <title>{p.address} · {p.clientName} · {percent(p.progress)}</title><circle
+            class="peer-target"
             cx={pos.x}
             cy={pos.y}
             r="26"

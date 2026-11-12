@@ -1374,6 +1374,12 @@ input[role='switch']:checked::after {
 }
 .peer-map g[role='button'] {
   cursor: pointer;
+  outline: none;
+}
+.peer-map g[role='button']:focus-visible .peer-target {
+  stroke: var(--blue);
+  stroke-width: 1.5;
+  fill: var(--selection);
 }
 .peer-card {
   position: relative;
