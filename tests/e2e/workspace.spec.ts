@@ -317,6 +317,9 @@ test('mobile navigation is thumb reachable and every visible control has a 44px 
   await page.setViewportSize({ width: 390, height: 844 });
   await server(page);
   expect(await smallTargets(page)).toEqual([]);
+  await page.locator('.row-menu').first().click();
+  await expect(page.getByRole('menuitem', { name: 'Copy info hash' })).toBeVisible();
+  await page.keyboard.press('Escape');
   const nav = page.getByRole('navigation', { name: 'Main navigation' });
   const navBox = await nav.boundingBox();
   expect(navBox!.y).toBeGreaterThan(700);
@@ -503,4 +506,54 @@ test('small phones keep file, tracker, options, and settings controls at 44px wi
       el.scrollTop = 0;
     });
   }
+});
+
+test('missing newer APIs and blocked storage keep the client usable', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.addInitScript(() => {
+    Object.defineProperty(AbortSignal, 'timeout', { value: undefined, configurable: true });
+    delete (HTMLElement.prototype as any).inert;
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new Error('Storage blocked');
+      },
+    });
+  });
+  await server(page);
+  expect(await page.evaluate(() => 'inert' in HTMLElement.prototype)).toBe(true);
+  await expect(page.locator('.row-actions').first()).toHaveCSS('opacity', '1');
+  await page.getByTestId('torrent-row').first().click();
+  await expect(page.locator('.boost-card')).toBeVisible();
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await expect(page.locator('.inspector')).toHaveCount(0);
+  for (let i = 0; i < 2; i++) {
+    await page.getByRole('button', { name: 'Add torrent', exact: true }).click();
+    await expect(page.locator('.app-shell')).toHaveJSProperty('inert', true);
+    await page.getByRole('button', { name: 'Close dialog' }).click();
+    await expect(page.locator('dialog')).toHaveCount(0);
+    await expect(page.locator('.app-shell')).toHaveJSProperty('inert', false);
+  }
+  await page
+    .getByRole('navigation', { name: 'Main navigation' })
+    .getByRole('button', { name: 'Settings', exact: true })
+    .click();
+  await page
+    .locator('.settings-tabs')
+    .getByRole('button', { name: 'Appearance', exact: true })
+    .click();
+  await page.getByRole('combobox', { name: 'Color theme' }).selectOption('dark');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+});
+
+test('mobile menu actions target the tapped torrent without a prior selection', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  const { calls } = await server(page);
+  await page.locator('.row-menu').first().click();
+  await page.getByRole('menuitem', { name: /^Pause/ }).click();
+  await expect
+    .poll(() => calls.find((c) => c.method === 'torrent-stop')?.arguments.ids)
+    .toEqual([1]);
 });

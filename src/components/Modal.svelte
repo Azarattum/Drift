@@ -3,6 +3,7 @@
   import { onMount, type Snippet } from 'svelte';
   import { cubicOut } from 'svelte/easing';
   import { X } from '@lucide/svelte';
+  import { isolateDialog, nativeInert } from '../lib/browser';
   let {
     title,
     close,
@@ -16,10 +17,13 @@
   } = $props();
   let dialog: HTMLDialogElement;
   let prior: HTMLElement | null = null;
+  let releaseBackground = () => {};
   const titleId = $props.id();
   onMount(() => {
     prior = document.activeElement as HTMLElement;
     dialog.showModal();
+    releaseBackground = isolateDialog(dialog);
+    return () => releaseBackground();
   });
   function enter(node: HTMLDialogElement) {
     delete node.dataset.closing;
@@ -30,6 +34,9 @@
     return animation();
   }
   function animation() {
+    // Keep Safari 15.4 off its buggy native-dialog Web Animations path.
+    // Modern browsers retain the existing motion and native background handling.
+    if (!nativeInert) return { duration: 0 };
     return {
       duration: motion(160),
       easing: cubicOut,
@@ -37,6 +44,7 @@
     };
   }
   function finished() {
+    releaseBackground();
     dialog.close();
     if (prior?.isConnected) prior.focus({ preventScroll: true });
   }

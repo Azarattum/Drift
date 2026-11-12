@@ -1,4 +1,6 @@
 import { copyText } from './clipboard';
+import { requestDeadline } from './deadline';
+import { preference } from './preferences';
 import { Transmission } from './rpc';
 import { stage } from './stage';
 import type { Capabilities, Filter, Sample, Torrent } from './types';
@@ -64,7 +66,7 @@ const detailsFields = [
 ];
 
 export class Client {
-  rpc = new Transmission(localStorage.getItem('drift.endpoint') || undefined);
+  rpc = new Transmission(preference('drift.endpoint') || undefined);
   torrents = $state<Torrent[]>([]);
   session = $state<Record<string, any>>({});
   stats = $state<Record<string, any>>({});
@@ -196,10 +198,11 @@ export class Client {
     const now = Date.now();
     if (now - this.lastCapabilityProbe < (this.capabilities ? 1500 : 30000)) return;
     this.lastCapabilityProbe = now;
+    const deadline = requestDeadline(2000);
     try {
       const url = new URL('web/full-speed.json', new URL('.', this.rpc.endpoint));
       url.searchParams.set('t', String(Date.now()));
-      const r = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(2000) });
+      const r = await fetch(url, { cache: 'no-store', signal: deadline.signal });
       const value = r.ok ? await r.json() : null;
       this.capabilities =
         value?.version === 1 &&
@@ -211,6 +214,8 @@ export class Client {
           : null;
     } catch {
       this.capabilities = null;
+    } finally {
+      deadline.dispose();
     }
   }
   select(t: Torrent, event?: MouseEvent) {

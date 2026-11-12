@@ -235,7 +235,13 @@ code {
 .icon-button.full,
 .icon-button.full[aria-pressed='true'] {
   color: var(--amber);
-  background: color-mix(in srgb, var(--amber) 10%, transparent);
+  background: rgba(181, 124, 32, 0.1);
+}
+@supports (background: color-mix(in srgb, black, white)) {
+  .icon-button.full,
+  .icon-button.full[aria-pressed='true'] {
+    background: color-mix(in srgb, var(--amber) 10%, transparent);
+  }
 }
 .tiny-button {
   display: inline-flex;
@@ -269,8 +275,13 @@ code {
 }
 .input:focus {
   border-color: var(--blue);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 10%, transparent);
+  box-shadow: 0 0 0 3px rgba(85, 116, 223, 0.15);
   outline: 0;
+}
+@supports (background: color-mix(in srgb, black, white)) {
+  .input:focus {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 10%, transparent);
+  }
 }
 .status-dot {
   width: 6px;
@@ -302,8 +313,13 @@ code {
 .app-shell {
   display: grid;
   grid-template-columns: 228px minmax(0, 1fr);
-  height: 100dvh;
+  height: 100vh;
   overflow: hidden;
+}
+@supports (height: 100dvh) {
+  .app-shell {
+    height: 100dvh;
+  }
 }
 .app-shell.inspecting {
   grid-template-columns: 228px minmax(0, 1fr) 448px;
@@ -475,6 +491,7 @@ code {
   padding: 0 27px;
   border-bottom: 1px solid var(--border);
   background: rgba(var(--surface-rgb), 0.85);
+  -webkit-backdrop-filter: blur(18px);
   backdrop-filter: blur(18px);
   position: relative;
   z-index: 2;
@@ -642,8 +659,13 @@ code {
   gap: 13px;
   padding: 0 27px;
   border-block: 1px solid var(--border);
-  background: color-mix(in srgb, var(--soft) 50%, var(--surface));
+  background: var(--soft);
   font-size: 12px;
+}
+@supports (background: color-mix(in srgb, black, white)) {
+  .list-toolbar {
+    background: color-mix(in srgb, var(--soft) 50%, var(--surface));
+  }
 }
 .sort-control {
   margin-left: auto;
@@ -866,6 +888,7 @@ code {
   font-size: 12px;
   color: var(--muted);
   background: rgba(var(--surface-rgb), 0.8);
+  -webkit-backdrop-filter: blur(16px);
   backdrop-filter: blur(16px);
 }
 .statusbar > div {
@@ -914,10 +937,15 @@ code {
   align-items: center;
   gap: 8px;
   padding: 10px 24px;
-  background: color-mix(in srgb, var(--amber) 8%, var(--surface));
+  background: rgba(181, 124, 32, 0.08);
   color: var(--amber);
   font-size: 13px;
   flex-wrap: wrap;
+}
+@supports (background: color-mix(in srgb, black, white)) {
+  .connection-error {
+    background: color-mix(in srgb, var(--amber) 8%, var(--surface));
+  }
 }
 .connection-error > span {
   flex: 1;
@@ -1021,8 +1049,14 @@ code {
   margin-bottom: 16px;
 }
 .stage-card.warning {
-  background: color-mix(in srgb, var(--amber) 6%, var(--surface));
-  border-color: color-mix(in srgb, var(--amber) 20%, var(--border));
+  background: rgba(181, 124, 32, 0.06);
+  border-color: rgba(181, 124, 32, 0.35);
+}
+@supports (background: color-mix(in srgb, black, white)) {
+  .stage-card.warning {
+    background: color-mix(in srgb, var(--amber) 6%, var(--surface));
+    border-color: color-mix(in srgb, var(--amber) 20%, var(--border));
+  }
 }
 .stage-title {
   display: flex;
@@ -1075,8 +1109,14 @@ code {
 }
 .boost-card.active {
   color: var(--amber);
-  border-color: color-mix(in srgb, var(--amber) 35%, var(--border));
-  background: color-mix(in srgb, var(--amber) 4%, var(--surface));
+  border-color: rgba(181, 124, 32, 0.35);
+  background: rgba(181, 124, 32, 0.04);
+}
+@supports (background: color-mix(in srgb, black, white)) {
+  .boost-card.active {
+    border-color: color-mix(in srgb, var(--amber) 35%, var(--border));
+    background: color-mix(in srgb, var(--amber) 4%, var(--surface));
+  }
 }
 .boost-card > span:first-of-type {
   display: flex;
@@ -1354,6 +1394,7 @@ code {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px;
+  -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
   font-size: 12px;
   box-shadow: 0 3px 15px #00000006;
@@ -1553,15 +1594,21 @@ dialog {
   color: var(--text);
   box-shadow: var(--shadow);
   width: min(480px, calc(100vw - 28px));
-  max-height: calc(100dvh - 40px);
+  max-height: calc(100vh - 40px);
   overflow: auto;
   margin: auto;
+}
+@supports (height: 100dvh) {
+  dialog {
+    max-height: calc(100dvh - 40px);
+  }
 }
 dialog.wide {
   width: min(580px, calc(100vw - 28px));
 }
 dialog::backdrop {
   background: #1b1b293d;
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
 .modal-header {
@@ -1574,6 +1621,7 @@ dialog::backdrop {
   top: 0;
   z-index: 2;
   background: rgba(var(--surface-rgb), 0.93);
+  -webkit-backdrop-filter: blur(18px);
   backdrop-filter: blur(18px);
 }
 .modal-header h2 {
@@ -1743,14 +1791,20 @@ dialog::backdrop {
   z-index: 61;
   width: 232px;
   background: rgba(var(--surface-rgb), 0.94);
+  -webkit-backdrop-filter: blur(24px);
   backdrop-filter: blur(24px);
   border: 1px solid var(--strong-border);
   border-radius: 10px;
   padding: 5px;
   box-shadow: var(--shadow);
   font-size: 13px;
-  max-height: calc(100dvh - 20px);
+  max-height: calc(100vh - 20px);
   overflow: auto;
+}
+@supports (height: 100dvh) {
+  .context-menu {
+    max-height: calc(100dvh - 20px);
+  }
 }
 .context-menu > button {
   display: flex;
@@ -1819,6 +1873,7 @@ dialog::backdrop {
   z-index: 100;
   box-shadow: var(--shadow);
   background: rgba(var(--surface-rgb), 0.92);
+  -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
   max-width: calc(100vw - 28px);
   font-size: 13px;
@@ -1828,6 +1883,7 @@ dialog::backdrop {
   inset: 0;
   z-index: 110;
   background: rgba(var(--surface-rgb), 0.85);
+  -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
   display: flex;
   align-items: center;
@@ -1956,6 +2012,7 @@ dialog::backdrop {
     position: fixed;
     inset: 0;
     background: #0004;
+    -webkit-backdrop-filter: blur(3px);
     backdrop-filter: blur(3px);
     z-index: 51;
   }
@@ -1997,9 +2054,6 @@ dialog::backdrop {
   .inspecting .row-actions {
     width: auto;
     opacity: 1;
-  }
-  .row-actions .icon-button:not(:last-child):not(.mobile-detail) {
-    display: none !important;
   }
   .row-actions .mobile-detail {
     display: flex;
@@ -2168,12 +2222,6 @@ dialog::backdrop {
   }
   .row-progress {
     bottom: 8px;
-  }
-  .row-actions .icon-button:not(:last-child) {
-    display: none !important;
-  }
-  .row-actions .icon-button:has(svg) {
-    display: flex;
   }
   .row-stage-detail {
     display: none;
@@ -2614,11 +2662,13 @@ dialog::backdrop {
 }
 dialog[data-closing='true']::backdrop {
   background-color: transparent;
+  -webkit-backdrop-filter: blur(0);
   backdrop-filter: blur(0);
 }
 @starting-style {
   dialog::backdrop {
     background-color: transparent;
+    -webkit-backdrop-filter: blur(0);
     backdrop-filter: blur(0);
   }
 }
@@ -2819,6 +2869,7 @@ dialog[data-closing='true']::backdrop {
     border: 1px solid var(--strong-border);
     border-radius: 25px;
     background: rgba(var(--surface-rgb), 0.94);
+    -webkit-backdrop-filter: blur(24px);
     backdrop-filter: blur(24px);
     box-shadow: 0 5px 24px #0000000d;
     padding: 5px;
@@ -2979,6 +3030,7 @@ dialog[data-closing='true']::backdrop {
   .row-actions,
   .inspecting .row-actions {
     width: 44px;
+    opacity: 1;
   }
   .row-actions .icon-button.row-menu {
     display: inline-flex !important;
@@ -3037,9 +3089,14 @@ dialog[data-closing='true']::backdrop {
     top: auto !important;
     bottom: calc(98px + env(safe-area-inset-bottom));
     width: auto;
-    max-height: calc(100dvh - 125px);
+    max-height: calc(100vh - 125px);
     padding: 8px;
     border-radius: 16px;
+  }
+  @supports (height: 100dvh) {
+    .context-menu {
+      max-height: calc(100dvh - 125px);
+    }
   }
   .context-menu > button {
     min-height: 48px;
@@ -3158,5 +3215,20 @@ dialog[data-closing='true']::backdrop {
   }
   .hash-line code {
     font-size: 12px;
+  }
+}
+
+/* The shipped Tailwind/LayerChart subset has explicit values for older Safari.
+   Color interpolation remains an enhancement on browsers that support it. */
+@supports not (background: color-mix(in srgb, black, white)) {
+  .speed-chart .lc-grid,
+  .speed-chart .lc-rule {
+    --stroke-color: var(--border);
+  }
+  .lc-tooltip-header {
+    border-color: var(--border);
+  }
+  .lc-tooltip-separator {
+    background: var(--border);
   }
 }

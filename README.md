@@ -30,7 +30,7 @@ bun run check
 bun run lint
 bun run format
 bun run test
-bunx playwright install chromium webkit
+bun node_modules/@playwright/test/cli.js install chromium webkit
 bun run test:e2e
 bun run build
 bun run validate
@@ -43,6 +43,22 @@ DRIFT_RPC_PROXY=http://router.local:9091 bun run dev
 ```
 
 In Connection settings use `http://localhost:5173/transmission/rpc` for this proxy. The endpoint is remembered locally. Credentials stay in memory and must be entered again after reload. Use HTTPS for authenticated remote connections. Cross-origin servers must allow CORS and expose the X-Transmission-Session-Id header, or use a same-origin proxy.
+
+## Browser compatibility
+
+Safari 15.4 / iOS 15.4.1 is the minimum browser target, including an iPhone 8 viewport of 375 × 667 CSS pixels. JavaScript and CSS builds explicitly target Safari 15.4. Native request timeouts have an AbortController fallback; the inert polyfill is downloaded only when the browser lacks it. Blocked storage falls back to preferences in memory. New color interpolation and backdrop entry effects are optional, with compatible colors, prefixed blur, and viewport sizing underneath.
+
+On browsers without native inert, modal backgrounds are explicitly isolated and native dialog animation is skipped to avoid Safari 15.4 bugs fixed in 15.5. Modern browsers retain native modal handling and the existing animations. Tailwind 4's general browser requirement is newer; Drift tests its shipped CSS subset and supplies the needed fallbacks. Adding framework utilities still requires checking this minimum target.
+
+Run the production bundle in the pinned, archived WebKit 15.4 engine:
+
+```sh
+bun node_modules/playwright-legacy/cli.js install webkit
+bun run build
+bun run test:legacy
+```
+
+The legacy check exercises the real compiled assets with isolated RPC fixtures, including graph rendering, file selection, peers, clipboard fallback, repeated dialogs, background isolation, themes, and 44px touch targets. Some archived builds expose APIs newer than the stable iOS release, so the check disables them explicitly. This is an older WebKit engine at iPhone 8 size, not a physical iOS device or an iOS simulator; hardware performance, the on-screen keyboard, and browser chrome still need a device check.
 
 ## Install
 
@@ -93,7 +109,7 @@ The helper derives the bind address from UCI; DRIFT_RPC_URL can override the end
 
 Flat surfaces, a restrained hierarchy, contextual controls, and explicit state. Readable typography with a 12px minimum for annotations, keyed FLIP movement, stable inspector exits, short overlay motion, and functional scroll fades. No decorative gradients or private design-library dependencies.
 
-MIT. Inter: SIL Open Font License. Lucide and D3: ISC. LayerChart: MIT. Third-party notices are included in public/licenses and the compiled bundle.
+MIT. Inter: SIL Open Font License. Lucide and D3: ISC. LayerChart: MIT. The inert polyfill: W3C Software License. Third-party notices are included in public/licenses and the compiled bundle.
 
 An opt-in live smoke check is available after deployment:
 

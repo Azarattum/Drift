@@ -2,5 +2,10 @@ import { mount } from 'svelte';
 import '@fontsource-variable/inter';
 import './app.css';
 import App from './App.svelte';
+import { prepareBrowser } from './lib/browser';
 
-mount(App, { target: document.getElementById('app')! });
+async function start() {
+  await prepareBrowser();
+  mount(App, { target: document.getElementById('app')! });
+}
+void start();

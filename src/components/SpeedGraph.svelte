@@ -97,7 +97,7 @@
         xAxis: {
           ticks: width < 500 ? 3 : 5,
           format: tick,
-          tickOcclusion: { padding: 12, priority: 'start-end' },
+          tickOcclusion: { padding: width < 500 ? 24 : 12, priority: 'start-end' },
           rule: false,
           tickMarks: false,
         },

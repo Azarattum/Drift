@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { preference, savePreference } from './lib/preferences';
   import { motion } from './lib/motion';
   import { magnetLink } from './lib/clipboard';
   import { onMount, tick } from 'svelte';
@@ -74,7 +75,7 @@
     password = $state('');
   let sessionDraft = $state<Record<string, any>>({}),
     saving = $state(false);
-  let theme = $state(localStorage.getItem('drift.theme') || 'system');
+  let theme = $state(preference('drift.theme') || 'system');
   const filters: { id: Filter; label: string; icon: typeof Layers }[] = [
     { id: 'all', label: 'All transfers', icon: Layers },
     { id: 'downloading', label: 'Downloading', icon: ArrowDown },
@@ -91,7 +92,7 @@
   let dark = $derived(theme === 'dark' || (theme === 'system' && systemDark));
   $effect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-    localStorage.setItem('drift.theme', theme);
+    savePreference('drift.theme', theme);
   });
 
   onMount(() => {
@@ -141,6 +142,7 @@
     modal = 'add';
   }
   function openMenu(e: MouseEvent, t: Torrent) {
+    if (!client.selected.includes(t.id)) client.select(t);
     const rect = (e.currentTarget as HTMLElement)?.getBoundingClientRect();
     context = {
       x: Math.min(Math.max(8, e.clientX || rect?.left || 8), innerWidth - 240),
@@ -237,7 +239,7 @@
       client.rpc.password = password;
       client.rpc.token = '';
       await client.rpc.call('session-get');
-      localStorage.setItem('drift.endpoint', u.href);
+      savePreference('drift.endpoint', u.href);
       await client.poll(true);
       modal = null;
       client.toast('Connected to Transmission');
@@ -587,7 +589,7 @@
         {#each client.visible as t (t.id)}<div
             data-row={t.id}
             animate:flip={{
-              duration: matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200,
+              duration: motion(200),
             }}
           >
             <TorrentRow
@@ -1137,7 +1139,9 @@
 {#if client.copyValue !== null}<Modal title="Copy text" close={() => (client.copyValue = null)}>
     <div class="modal-form">
       <p class="hint">
-        Your browser blocked automatic copying. Select the text and press ⌘C or Ctrl+C.
+        {mobile
+          ? 'Touch and hold the text to select and copy it.'
+          : 'Select the text and press ⌘C or Ctrl+C.'}
       </p>
       <textarea
         class="input mono manual-copy"
