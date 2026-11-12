@@ -1071,10 +1071,17 @@
           }}
         />
       </div>
-      <label>Name<input class="input" required bind:value={renameValue} /></label><button
-        class="button primary"
-        disabled={renameValue === rename.name}>Rename</button
-      >
+      <div class="rename-field">
+        <label for={`${optionsFormId}-filename`}>Name</label>
+        <div class="rename-field-row">
+          <input
+            id={`${optionsFormId}-filename`}
+            class="input"
+            required
+            bind:value={renameValue}
+          /><button class="button primary" disabled={renameValue === rename.name}>Rename</button>
+        </div>
+      </div>
     </form></Modal
   >{/if}
 {#if trackerEditing}<Modal title="Edit trackers" close={() => (trackerEditing = false)}

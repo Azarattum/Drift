@@ -3604,3 +3604,20 @@ input[type='number']::-webkit-outer-spin-button {
     min-height: 44px;
   }
 }
+
+.rename-field {
+  display: grid;
+  gap: 8px;
+}
+.rename-field-row {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+.rename-field-row .input {
+  flex: 1;
+  min-width: 0;
+}
+.rename-field-row .button {
+  flex-shrink: 0;
+}
