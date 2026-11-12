@@ -258,9 +258,12 @@ test('dark theme, reduced motion, and batch selection work together', async ({ p
   const sort = await page.locator('.list-toolbar').boundingBox();
   const actions = await page.getByRole('toolbar', { name: 'Selected transfers' }).boundingBox();
   expect(actions!.y).toBeGreaterThanOrEqual(sort!.y + sort!.height);
+  const selectedRow = await page.getByTestId('torrent-row').first().boundingBox();
+  expect(Math.abs(actions!.x - selectedRow!.x)).toBeLessThan(2);
+  expect(Math.abs(actions!.width - selectedRow!.width)).toBeLessThan(2);
 
   await page.getByTestId('torrent-row').nth(2).click({ button: 'right' });
-  await expect(page.locator('.menu-caption')).toContainText('3 transfers');
+  await expect(page.locator('.menu-caption').first()).toContainText('3 transfers');
   await page.screenshot({ path: 'test-results/drift-dark.png', fullPage: true });
 });
 
