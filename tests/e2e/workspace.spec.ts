@@ -1108,7 +1108,8 @@ test('file right-click changes priority directly and phone scrollers fit their v
   await page.getByRole('treeitem').first().click({ button: 'right' });
   await expect(page.getByRole('menu', { name: 'File actions' })).toBeVisible();
   const fileMenu = page.getByRole('menu', { name: 'File actions' });
-  await expect(fileMenu.locator('.menu-caption,hr')).toHaveCount(0);
+  await expect(fileMenu.locator('.menu-caption')).toHaveText('File priority');
+  await expect(fileMenu.locator('hr')).toHaveCount(0);
   const priorityBounds = await fileMenu
     .getByRole('group', { name: 'Priority', exact: true })
     .boundingBox();

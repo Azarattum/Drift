@@ -1051,6 +1051,7 @@
         }}><Film size={16} />Watch video</button
       >
       <hr />{/if}
+    <div class="menu-caption">File priority</div>
     <PriorityControl
       value={priority(fileContext.node)}
       onchange={(value) => {
