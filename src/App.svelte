@@ -4,7 +4,7 @@
   import QueueControl from './components/QueueControl.svelte';
   import { preference, savePreference } from './lib/preferences';
   import { motion } from './lib/motion';
-  import { magnetLink } from './lib/clipboard';
+  import { magnetLink, normalizeMagnetLink } from './lib/clipboard';
   import { onMount, tick } from 'svelte';
   import { fade, fly, slide } from 'svelte/transition';
   import { flip } from 'svelte/animate';
@@ -258,7 +258,7 @@
       let last: number | undefined;
       for (const link of links) {
         const r = await client.rpc.call('torrent-add', {
-          filename: link,
+          filename: normalizeMagnetLink(link),
           paused: addPaused,
           ...(addDir ? { 'download-dir': addDir } : {}),
         });

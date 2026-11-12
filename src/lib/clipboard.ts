@@ -2,10 +2,23 @@ import type { Torrent } from './types';
 
 /** A cached magnet keeps copying within the user's activation, including Safari. */
 export function magnetLink(torrent: Torrent): string {
-  if (torrent.magnetLink) return torrent.magnetLink;
-  const params = new URLSearchParams({ xt: `urn:btih:${torrent.hashString}`, dn: torrent.name });
+  if (torrent.magnetLink) return normalizeMagnetLink(torrent.magnetLink);
+  const params = new URLSearchParams({ dn: torrent.name });
   for (const tracker of torrent.trackerStats || []) params.append('tr', tracker.announce);
-  return `magnet:?${params.toString()}`;
+  return `magnet:?xt=urn:btih:${torrent.hashString}&${params.toString()}`;
+}
+
+/** Transmission expects the topic URN delimiters literally, even in query values. */
+export function normalizeMagnetLink(link: string): string {
+  if (!/^magnet:\?/i.test(link)) return link;
+  return link.replace(/([?&]xt=)([^&]*)/gi, (original, prefix, value) => {
+    try {
+      const topic = decodeURIComponent(value);
+      return /^urn:btih:(?:[a-f0-9]{40}|[a-z2-7]{32})$/i.test(topic) ? prefix + topic : original;
+    } catch {
+      return original;
+    }
+  });
 }
 
 /** HTTP LAN pages cannot use the secure-context Clipboard API. */
