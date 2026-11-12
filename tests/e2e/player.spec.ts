@@ -213,3 +213,17 @@ test('unsupported media explains the browser limitation and preserves a retry pa
   );
   await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
 });
+
+test('video hover action opens the player without selecting the torrent', async ({ page }) => {
+  await setup(page);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.player-dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Close inspector', exact: true }).click();
+  const row = page.getByTestId('torrent-row').first();
+  await row.hover();
+  const watch = row.getByRole('button', { name: 'Watch video for Northern Light', exact: true });
+  await expect(watch).toBeVisible();
+  await watch.click();
+  await expect(page.locator('.player-dialog')).toBeVisible();
+  await expect(page.locator('.inspector')).toHaveCount(0);
+});

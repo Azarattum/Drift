@@ -6,6 +6,7 @@
     ChevronRight,
     File,
     Folder,
+    Film,
     LoaderCircle,
     MoreHorizontal,
     Pause,
@@ -16,28 +17,58 @@
   import { client } from '../lib/client.svelte';
   import { bytes, duration, percent, speed } from '../lib/format';
   import { stage } from '../lib/stage';
+  import { videoFiles } from '../lib/playback';
   import { transferControl } from '../lib/transfer-control';
   import type { Torrent } from '../lib/types';
   let {
     torrent: t,
     selected,
     open,
+    watch,
     menu,
     menuOpen = false,
   }: {
     torrent: Torrent;
     selected: boolean;
     open: () => void;
+    watch: () => void;
     menu: (e: MouseEvent, t: Torrent) => void;
     menuOpen?: boolean;
   } = $props();
   let s = $derived(stage(t));
   let full = $derived(client.isFullSpeed(t));
   let control = $derived(transferControl(t));
+  let available = $state(false);
+  let probing = false;
+  let checkedAt = 0;
+  let canWatch = $derived(
+    t.metadataPercentComplete >= 1 &&
+      (available ||
+        videoFiles(t.files || (client.details?.id === t.id ? client.details.files : [])).length >
+          0),
+  );
+  async function probeVideo() {
+    if (t.metadataPercentComplete < 1 || probing || Date.now() - checkedAt < 60000) return;
+    probing = true;
+    try {
+      const result = await client.rpc.call<{ torrents: Torrent[] }>('torrent-get', {
+        ids: [t.id],
+        fields: ['id', 'files'],
+      });
+      available = videoFiles(result.torrents[0]?.files).length > 0;
+      checkedAt = Date.now();
+    } catch {
+      /* Retry on the next hover when the connection recovers. */
+    } finally {
+      probing = false;
+    }
+  }
 </script>
 
 <div
   class="torrent-row"
+  onpointerenter={probeVideo}
+  onfocusin={probeVideo}
   class:selected
   class:menu-open={menuOpen}
   data-testid="torrent-row"
@@ -162,6 +193,14 @@
           e.stopPropagation();
           void client.fullSpeed(t);
         }}><Zap size={16} /><span>Full speed</span></button
+      >{/if}{#if canWatch}<button
+        class="icon-button row-watch"
+        aria-label={`Watch video for ${t.name}`}
+        title="Watch video"
+        onclick={(e) => {
+          e.stopPropagation();
+          watch();
+        }}><Film size={16} /></button
       >{/if}<button
       class="icon-button row-menu"
       aria-haspopup="menu"

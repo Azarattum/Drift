@@ -2641,6 +2641,7 @@ summary {
   }
   .row-actions .row-toggle,
   .row-actions .row-boost,
+  .row-actions .row-watch,
   .row-actions .mobile-detail {
     display: none;
   }

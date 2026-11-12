@@ -651,6 +651,7 @@
               open={() => {
                 client.select(t);
               }}
+              watch={() => watchTorrent(t)}
               menu={openMenu}
               menuOpen={context?.t.id === t.id}
             />
