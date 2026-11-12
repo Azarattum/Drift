@@ -25,9 +25,10 @@ function command(cmd) {
     return output;
 }
 
-let rpcHost = trim(command('uci -q get transmission.@transmission[0].rpc_bind_address'));
+let rpcHost = trim(command('uci -q get transmission.@transmission[0].rpc_bind_address || true'));
 if (!rpcHost || rpcHost == '0.0.0.0') rpcHost = '127.0.0.1';
-const RPC_URL = getenv('DRIFT_RPC_URL') || ('http://' + rpcHost + ':9091/transmission/rpc');
+let rpcPort = trim(command('uci -q get transmission.@transmission[0].rpc_port || true')) || '9091';
+const RPC_URL = getenv('DRIFT_RPC_URL') || ('http://' + rpcHost + ':' + rpcPort + '/transmission/rpc');
 
 function rpc(method, arguments) {
     for (let attempt = 0; attempt < 2; attempt++) {

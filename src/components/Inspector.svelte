@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { motion } from '../lib/motion';
   import {
     ChevronDown,
     ChevronRight,
@@ -106,7 +107,11 @@
   }
 </script>
 
-<aside class="inspector" aria-label="Torrent inspector" transition:fly={{ x: 16, duration: 180 }}>
+<aside
+  class="inspector"
+  aria-label="Torrent inspector"
+  transition:fly={{ x: 16, duration: motion(180) }}
+>
   <header class="inspector-header">
     <span class="eyebrow">INSPECTOR</span>
     <div class="flex items-center gap-1">
@@ -263,6 +268,20 @@
         <div class="file-tree" role="tree" aria-label="Torrent files">
           {#each nodes as n (n.path)}<div
               role="treeitem"
+              tabindex="0"
+              onkeydown={(e) => {
+                if (e.key === 'F2' || e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  rename = n;
+                  renameValue = n.name;
+                }
+              }}
+              oncontextmenu={(e) => {
+                e.preventDefault();
+                rename = n;
+                renameValue = n.name;
+              }}
               aria-selected={checked(n)}
               aria-expanded={n.children.length ? !collapsed.has(n.path) : undefined}
               aria-level={n.depth + 1}

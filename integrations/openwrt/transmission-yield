@@ -9,7 +9,7 @@ config_get down main busy_download_kbytes 128
 config_get up main busy_upload_kbytes 32
 config_get minmem main minimum_available_kbytes 24576
 config_get maxcpu main maximum_cpu_percent 70
-config_get rpc main rpc '192.168.1.1:9091'
+config_get rpc main rpc '127.0.0.1:9091'
 
 read_cpu() {
     read _ user nice system idle iowait irq softirq steal rest < /proc/stat

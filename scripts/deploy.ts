@@ -24,7 +24,7 @@ const upload = Bun.spawn(
     '-o',
     'BatchMode=yes',
     host,
-    `mkdir -p '${destination}' && tar -xzf - -C '${destination}'`,
+    `mkdir -p '${destination}' && tar -xzof - -C '${destination}'`,
   ],
   { stdin: archive.stdout, stdout: 'inherit', stderr: 'inherit' },
 );

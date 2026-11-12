@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { motion } from '../lib/motion';
   import { onMount, type Snippet } from 'svelte';
   import { fly } from 'svelte/transition';
   import { X } from '@lucide/svelte';
@@ -30,7 +31,7 @@
     if (e.key === 'Escape') close();
   }}
 >
-  <div class="modal-body" transition:fly={{ y: 8, duration: 160 }}>
+  <div class="modal-body" transition:fly={{ y: 8, duration: motion(160) }}>
     <header class="modal-header">
       <h2>{title}</h2>
       <button class="icon-button" aria-label="Close dialog" onclick={close}><X size={17} /></button>

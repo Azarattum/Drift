@@ -85,8 +85,16 @@
           : `${bytes(t.sizeWhenDone)}${t.percentDone < 1 ? ` · ${percent(t.percentDone)}` : ''}`}</span
       >{#if full}<span
           class="full-indicator"
-          title={client.fullSpeedApplied(t) ? 'Full speed active' : 'Waiting for controller'}
-          ><Zap size={11} />{client.fullSpeedApplied(t) ? 'Full speed' : 'Applying…'}</span
+          title={!client.fullSpeedAvailable
+            ? 'Full speed controller is unavailable'
+            : client.fullSpeedApplied(t)
+              ? 'Full speed active'
+              : 'Waiting for controller'}
+          ><Zap size={11} />{!client.fullSpeedAvailable
+            ? 'Controller unavailable'
+            : client.fullSpeedApplied(t)
+              ? 'Full speed'
+              : 'Applying…'}</span
         >{/if}
     </div>
     <div class="row-progress" class:indeterminate={s.active && s.progress === undefined}>

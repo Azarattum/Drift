@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { motion } from './lib/motion';
   import { onMount, tick } from 'svelte';
   import { fade, fly, slide } from 'svelte/transition';
   import { flip } from 'svelte/animate';
@@ -81,15 +82,17 @@
   let selectedTorrents = $derived(client.torrents.filter((t) => client.selected.includes(t.id)));
   let anyRunning = $derived(selectedTorrents.some((t) => t.status !== 0));
   let dragDepth = 0;
-  let dark = $derived(
-    theme === 'dark' || (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches),
-  );
+  let systemDark = $state(matchMedia('(prefers-color-scheme: dark)').matches);
+  let dark = $derived(theme === 'dark' || (theme === 'system' && systemDark));
   $effect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
     localStorage.setItem('drift.theme', theme);
   });
 
   onMount(() => {
+    const media = matchMedia('(prefers-color-scheme: dark)');
+    const themeChanged = (event: MediaQueryListEvent) => (systemDark = event.matches);
+    media.addEventListener('change', themeChanged);
     let stopped = false;
     async function loop() {
       await client.poll();
@@ -102,6 +105,7 @@
     };
     document.addEventListener('visibilitychange', visibility);
     return () => {
+      media.removeEventListener('change', themeChanged);
       stopped = true;
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', visibility);
@@ -466,7 +470,7 @@
         >
       </div>
     </div>
-    {#if chart}<div class="graph-wrap" transition:slide={{ duration: 180 }}>
+    {#if chart}<div class="graph-wrap" transition:slide={{ duration: motion(180) }}>
         <SpeedGraph samples={client.samples} />
       </div>{/if}
     <div class="list-toolbar">
@@ -585,7 +589,7 @@
     tabindex="-1"
     aria-label="Transfer actions"
     style={`left:${context.x}px;top:${context.y}px`}
-    transition:fly={{ y: -4, duration: 100 }}
+    transition:fly={{ y: -4, duration: motion(100) }}
     onkeydown={(e) => {
       if (e.key === 'Escape') context = null;
       if (['ArrowDown', 'ArrowUp'].includes(e.key)) {
@@ -987,14 +991,18 @@
         >
       </form>{/if}</Modal
   >{/if}
-{#if dragging}<div class="drag-overlay" transition:fade={{ duration: 100 }}>
+{#if dragging}<div class="drag-overlay" transition:fade={{ duration: motion(100) }}>
     <div>
       <Download size={35} />
       <h2>Drop to add transfers</h2>
       <p>.torrent files</p>
     </div>
   </div>{/if}
-{#if client.notice}<div class="toast" role="status" transition:fly={{ y: 8, duration: 160 }}>
+{#if client.notice}<div
+    class="toast"
+    role="status"
+    transition:fly={{ y: 8, duration: motion(160) }}
+  >
     <span>{client.notice}</span><button
       class="tiny-button"
       aria-label="Dismiss notification"

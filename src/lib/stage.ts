@@ -94,7 +94,12 @@ export function stage(t: Torrent, now = Date.now() / 1000): Stage {
   if (t.rateDownload > 0)
     return {
       label: 'Downloading',
-      detail: `${t.peersSendingToUs || 1} of ${peers} peers sending data`,
+      detail:
+        t.webseedsSendingToUs > 0
+          ? `Receiving data from ${t.webseedsSendingToUs} web seed${t.webseedsSendingToUs === 1 ? '' : 's'}`
+          : peers > 0
+            ? `${t.peersSendingToUs || 1} of ${peers} peers sending data`
+            : 'Receiving file data',
       tone: 'blue',
       active: true,
       progress: t.percentDone,

@@ -2302,3 +2302,6 @@ dialog::backdrop {
     transition: none;
   }
 }
+.torrent-row {
+  user-select: none;
+}

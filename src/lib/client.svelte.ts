@@ -20,6 +20,7 @@ const overviewFields = [
   'uploadRatio',
   'peersConnected',
   'peersSendingToUs',
+  'webseedsSendingToUs',
   'peersGettingFromUs',
   'desiredAvailable',
   'addedDate',
