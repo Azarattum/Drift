@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { motion } from '../lib/motion';
   import {
     ChevronDown,
@@ -85,16 +85,20 @@
     fileMenuTrigger = e.currentTarget as HTMLElement;
     const rect = fileMenuTrigger.getBoundingClientRect();
     const event = e as MouseEvent;
-    fileContext = {
-      node: n,
-      x: Math.max(8, Math.min(event.clientX || rect.left, innerWidth - 212)),
-      y: Math.max(8, Math.min(event.clientY || rect.bottom, innerHeight - 256)),
-    };
-    void tick().then(() =>
-      document
-        .querySelector<HTMLElement>('.file-context-menu button')
-        ?.focus({ preventScroll: true }),
-    );
+    fileContext = { node: n, x: event.clientX || rect.left, y: event.clientY || rect.bottom };
+    void tick().then(() => {
+      const menu = document.querySelector<HTMLElement>('.file-context-menu');
+      if (!menu || fileContext?.node.path !== n.path) return;
+      if (!mobile) {
+        const bounds = menu.getBoundingClientRect();
+        fileContext = {
+          ...fileContext,
+          x: Math.max(12, Math.min(fileContext.x, innerWidth - bounds.width - 12)),
+          y: Math.max(12, Math.min(fileContext.y, innerHeight - bounds.height - 12)),
+        };
+      }
+      menu.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
+    });
   }
   function closeFileMenu() {
     fileContext = null;
@@ -107,6 +111,42 @@
   let saving = $state(false);
   let options = $state<Record<string, any>>({});
   let optionsId = $state(-1);
+  let editingOption = $state('');
+  let optionsReady = $derived(typeof t.honorsSessionLimits === 'boolean');
+  let optionsPending = $derived(
+    Object.keys(client.optionDrafts).some((key) => key.startsWith(`${t.id}:`)),
+  );
+  const optionKeys = [
+    'downloadLimit',
+    'downloadLimited',
+    'uploadLimit',
+    'uploadLimited',
+    'honorsSessionLimits',
+    'bandwidthPriority',
+    'peer-limit',
+    'seedRatioMode',
+    'seedRatioLimit',
+    'seedIdleMode',
+    'seedIdleLimit',
+    'sequential_download',
+  ];
+  function changeOption(event: Event) {
+    const input = event.target as HTMLInputElement | HTMLSelectElement;
+    if (
+      !optionKeys.includes(input.name) ||
+      !input.validity.valid ||
+      !client.online ||
+      !optionsReady
+    )
+      return;
+    const value =
+      input instanceof HTMLInputElement && input.type === 'checkbox'
+        ? input.checked
+        : Number(input.value);
+    if (input.value === '' || (typeof value === 'number' && !Number.isFinite(value))) return;
+    if (value === (client.optionDrafts[`${t.id}:${input.name}`] ?? t[input.name])) return;
+    client.queueOption(t.id, input.name, value, input.type === 'number' ? 400 : 0);
+  }
   let labelsText = $state('');
   let labelEditing = $state(false);
   const tabs = ['Overview', 'Files', 'Peers', 'Trackers', 'Options'];
@@ -189,19 +229,8 @@
   }
   $effect(() => {
     if (optionsId !== t.id) {
-      options = {
-        downloadLimit: t.downloadLimit || 0,
-        downloadLimited: t.downloadLimited || false,
-        uploadLimit: t.uploadLimit || 0,
-        uploadLimited: t.uploadLimited || false,
-        honorsSessionLimits: t.honorsSessionLimits ?? true,
-        bandwidthPriority: t.bandwidthPriority || 0,
-        'peer-limit': t['peer-limit'] || 50,
-        seedRatioMode: t.seedRatioMode || 0,
-        seedRatioLimit: t.seedRatioLimit || 2,
-        seedIdleMode: t.seedIdleMode || 0,
-        seedIdleLimit: t.seedIdleLimit || 30,
-      };
+      options = {};
+      editingOption = '';
       optionsId = t.id;
       trackerEditing = false;
       labelEditing = false;
@@ -211,8 +240,18 @@
     }
   });
   $effect(() => {
-    if (typeof t.sequential_download === 'boolean' && options.sequential_download === undefined)
-      options.sequential_download = t.sequential_download;
+    const id = t.id;
+    const values = Object.fromEntries(
+      optionKeys.filter((key) => t[key] !== undefined).map((key) => [key, t[key]]),
+    );
+    const drafts = client.optionDrafts;
+    const editing = editingOption;
+    untrack(() => {
+      for (const [key, value] of Object.entries(values)) {
+        if (`${id}:${key}` in drafts) options[key] = drafts[`${id}:${key}`];
+        else if (key !== editing) options[key] = value;
+      }
+    });
   });
   const toggleFolder = (path: string) => {
     collapsed = new Set(collapsed);
@@ -264,12 +303,8 @@
         ><ChevronLeft size={22} />Transfers</button
       >{:else}<span class="eyebrow">INSPECTOR</span>{/if}
     <div class="flex items-center gap-1">
-      {#if tab === 'Options'}<button
-          class="settings-save"
-          type="submit"
-          form={optionsFormId}
-          aria-label="Save changes"
-          disabled={saving || !client.online}>{saving ? 'Saving…' : 'Save'}</button
+      {#if tab === 'Options' && optionsPending}<span class="option-save-state" role="status"
+          >Saving…</span
         >{/if}
       {#if !mobile}<button class="icon-button" aria-label="Close inspector" onclick={close}
           ><X size={17} /></button
@@ -330,20 +365,20 @@
           {#if s.progress !== undefined && t.percentDone < 1}<b>{percent(s.progress)}</b>{/if}
           <div class="stage-actions">
             <button
-              class="stage-control"
+              class="button secondary compact stage-control"
               title={control.label}
               aria-label={control.label}
               onclick={() => client.safeAction(control.method, [t.id])}
               >{#if control.icon === 'play'}<Play
-                  size={17}
+                  size={16}
                 />{:else if control.icon === 'stop'}<Square
-                  size={15}
+                  size={16}
                   fill="currentColor"
-                />{:else}<Pause size={17} />{/if}{#if t.percentDone >= 1}<span>{control.label}</span
+                />{:else}<Pause size={16} />{/if}{#if t.percentDone >= 1}<span>{control.label}</span
                 >{/if}</button
             >
             {#if client.fullSpeedAvailable && t.percentDone < 1}<button
-                class="button full-speed-button"
+                class="button secondary compact full-speed-button"
                 class:enabled={client.isFullSpeed(t)}
                 aria-pressed={client.isFullSpeed(t)}
                 title="Bypass automatic bandwidth limits"
@@ -449,9 +484,12 @@
       </details>
       <details class="detail-disclosure">
         <summary><ChevronRight size={15} />Storage & labels</summary>
-        <p class="break-path mono">{t.downloadDir}</p>
+        <dl class="storage-location">
+          <dt>Download folder</dt>
+          <dd class="mono">{t.downloadDir}</dd>
+        </dl>
         <button
-          class="button secondary"
+          class="button secondary compact"
           onclick={() => {
             labelsText = (t.labels || []).filter((x) => x !== label).join(', ');
             labelEditing = true;
@@ -631,7 +669,7 @@
             onclick={() => client.safeAction('torrent-reannounce', [t.id])}
             ><RefreshCw size={14} /></button
           ><button
-            class="text-button"
+            class="icon-button"
             onclick={() => {
               trackerText = t.trackerList || t.trackerStats.map((x) => x.announce).join('\n');
               trackerEditing = true;
@@ -658,29 +696,32 @@
           >
             <span class="status-dot" class:success={tracker.lastAnnounceSucceeded} class:failed
             ></span>
-            <strong title={tracker.announce}>{tracker.host || tracker.announce}</strong>
+            <span class="tracker-copy">
+              <strong title={tracker.announce}>{tracker.host || tracker.announce}</strong>
+              <span class="tracker-summary">
+                <span class:danger={failed} title={failed ? tracker.lastAnnounceResult : undefined}
+                  >{tracker.announceState === 3
+                    ? 'Announcing…'
+                    : failed
+                      ? tracker.lastAnnounceResult
+                      : tracker.lastAnnounceTime === 0
+                        ? 'Waiting to announce'
+                        : `${tracker.seederCount >= 0 ? `${tracker.seederCount} seeds` : 'Seeds unknown'} · ${tracker.lastAnnouncePeerCount || 0} peers`}</span
+                >
+                {#if tracker.nextAnnounceTime > 0}<span class="next-announce"
+                    >{failed ? 'Retry in' : 'Next in'}
+                    {duration(tracker.nextAnnounceTime - Date.now() / 1000)}</span
+                  >{/if}
+              </span></span
+            >
             <ChevronDown
               size={15}
               class="muted"
               style={`transform:rotate(${expanded ? 180 : 0}deg)`}
             />
           </button>
-          <div class="tracker-summary">
-            <span class:danger={failed}
-              >{tracker.announceState === 3
-                ? 'Announcing…'
-                : failed
-                  ? tracker.lastAnnounceResult
-                  : tracker.lastAnnounceTime === 0
-                    ? 'Waiting to announce'
-                    : `${tracker.seederCount >= 0 ? `${tracker.seederCount} seeds` : 'Seeds unknown'} · ${tracker.lastAnnouncePeerCount || 0} peers`}</span
-            >
-            {#if tracker.nextAnnounceTime > 0}<span class="next-announce"
-                >{failed ? 'Retry in' : 'Next in'}
-                {duration(tracker.nextAnnounceTime - Date.now() / 1000)}</span
-              >{/if}
-          </div>
           {#if expanded}<div class="tracker-extra">
+              {#if failed}<p class="danger">{tracker.lastAnnounceResult}</p>{/if}
               <code>{tracker.announce}</code>
               <div>
                 <span>Tier {tracker.tier + 1}</span><span
@@ -701,18 +742,18 @@
           >
         </div>{/each}
     {:else if tab === 'Options'}
-      <form
-        id={optionsFormId}
+      <fieldset
         class="options-form"
-        onsubmit={async (e) => {
-          e.preventDefault();
-          saving = true;
-          try {
-            await client.action('torrent-set', [t.id], options);
-            client.toast('Transfer options saved');
-          } finally {
-            saving = false;
-          }
+        disabled={!client.online || !optionsReady}
+        oninput={changeOption}
+        onchange={changeOption}
+        onfocusin={(e) => {
+          const input = e.target as HTMLInputElement;
+          editingOption = input.type === 'number' ? input.name : '';
+        }}
+        onfocusout={() => {
+          editingOption = '';
+          client.flushOptions(t.id);
         }}
       >
         {#if typeof t.sequential_download === 'boolean'}<section class="settings-group">
@@ -726,6 +767,7 @@
                 ><input
                   type="checkbox"
                   role="switch"
+                  name="sequential_download"
                   bind:checked={options.sequential_download}
                 /></label
               >
@@ -741,6 +783,7 @@
               ><input
                 type="checkbox"
                 role="switch"
+                name="honorsSessionLimits"
                 bind:checked={options.honorsSessionLimits}
               /></label
             >
@@ -749,6 +792,7 @@
                 ><span class="setting-copy"><b>{f.title}</b></span><input
                   role="switch"
                   type="checkbox"
+                  name={f.key}
                   bind:checked={options[f.key]}
                 /></label
               >{#if options[f.key]}<label class="setting-row"
@@ -756,6 +800,8 @@
                     ><input
                       type="number"
                       min="0"
+                      required
+                      name={f.value}
                       aria-label={f.aria}
                       bind:value={options[f.value]}
                     />KB/s</span
@@ -764,7 +810,7 @@
             <label class="setting-row"
               ><span class="setting-copy"
                 ><b>Bandwidth priority</b><small>Priority relative to other torrents.</small></span
-              ><select bind:value={options.bandwidthPriority}
+              ><select name="bandwidthPriority" bind:value={options.bandwidthPriority}
                 ><option value={-1}>Low</option><option value={0}>Normal</option><option value={1}
                   >High</option
                 ></select
@@ -776,7 +822,9 @@
           <h3>Seeding</h3>
           <div class="settings-card">
             <label class="setting-row"
-              ><span>Share ratio</span><select bind:value={options.seedRatioMode}
+              ><span>Share ratio</span><select
+                name="seedRatioMode"
+                bind:value={options.seedRatioMode}
                 ><option value={0}>Global setting</option><option value={1}>Custom limit</option
                 ><option value={2}>Unlimited</option></select
               ></label
@@ -786,12 +834,16 @@
                   type="number"
                   min="0"
                   step="0.1"
+                  name="seedRatioLimit"
+                  required
                   aria-label="Ratio limit"
                   bind:value={options.seedRatioLimit}
                 /></label
               >{/if}
             <label class="setting-row"
-              ><span>Inactive seeds</span><select bind:value={options.seedIdleMode}
+              ><span>Inactive seeds</span><select
+                name="seedIdleMode"
+                bind:value={options.seedIdleMode}
                 ><option value={0}>Global setting</option><option value={1}>Custom timeout</option
                 ><option value={2}>Unlimited</option></select
               ></label
@@ -801,6 +853,8 @@
                   ><input
                     type="number"
                     min="1"
+                    required
+                    name="seedIdleLimit"
                     aria-label="Idle minutes"
                     bind:value={options.seedIdleLimit}
                   />min</span
@@ -815,13 +869,15 @@
               ><span>Peer limit</span><input
                 type="number"
                 min="1"
+                required
+                name="peer-limit"
                 aria-label="Peer limit"
                 bind:value={options['peer-limit']}
               /></label
             >
           </div>
         </section>
-      </form>
+      </fieldset>
     {/if}
   </div>
 </aside>

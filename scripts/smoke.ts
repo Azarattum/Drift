@@ -5,7 +5,11 @@ import { Transmission } from '../src/lib/rpc';
 const web = Bun.argv[2];
 if (!web) throw new Error('Usage: bun scripts/smoke.ts http://host:9091/transmission/web/');
 const rpc = new Transmission(new URL('../rpc', web).href);
-const session = await rpc.call('session-get', { fields: ['rpc-version'] });
+const session = await rpc.call('session-get', {
+  fields: ['rpc-version', 'peer-limit-per-torrent'],
+});
+const defaultPeerLimit = Number(session['peer-limit-per-torrent']);
+let restoreDefaultPeerLimit = false;
 const sequentialSupported = Number(session['rpc-version']) >= 18;
 const capability = await fetch(new URL('full-speed.json', web))
   .then((r) => (r.ok ? r.json() : null))
@@ -120,13 +124,11 @@ try {
     await page.getByRole('tab', { name: 'Options', exact: true }).click();
     const sequential = page.getByRole('switch', { name: /Sequential download/ });
     await sequential.check();
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
     await until(
       async () => (await get()).sequential_download === true,
       'Sequential mode not applied',
     );
     await sequential.uncheck();
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
     await until(
       async () => (await get()).sequential_download === false,
       'Normal mode not restored',
@@ -150,12 +152,45 @@ try {
     await page.getByTestId('torrent-row').filter({ hasText: renamed }).waitFor();
     console.log('PASS: real torrent rename updates the torrent name, root path, and displayed row');
   }
+  if (Number.isFinite(defaultPeerLimit) && defaultPeerLimit > 0) {
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page
+      .getByRole('navigation', { name: 'Settings sections', exact: true })
+      .getByRole('button', { name: 'Network', exact: true })
+      .click();
+    const limit = page.getByRole('spinbutton', { name: 'Peers per torrent', exact: true });
+    const changed = defaultPeerLimit === 65535 ? 65534 : defaultPeerLimit + 1;
+    restoreDefaultPeerLimit = true;
+    await limit.fill(String(changed));
+    await page.getByRole('heading', { name: 'Advanced connections', exact: true }).click();
+    const readDefault = async () =>
+      (await rpc.call('session-get', { fields: ['peer-limit-per-torrent'] }))[
+        'peer-limit-per-torrent'
+      ];
+    await until(async () => (await readDefault()) === changed, 'Global option did not auto-save');
+    await limit.fill(String(defaultPeerLimit));
+    await page.getByRole('heading', { name: 'Advanced connections', exact: true }).click();
+    await until(
+      async () => (await readDefault()) === defaultPeerLimit,
+      'Global option not restored',
+    );
+    restoreDefaultPeerLimit = false;
+    if ((await get())['peer-limit'] !== original['peer-limit'])
+      throw new Error('Global default affected the existing fixture limit');
+    await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+    await page.locator('dialog').waitFor({ state: 'detached' });
+    console.log(
+      'PASS: global option auto-save acknowledged by the daemon; previous default restored',
+    );
+  }
   await page.setViewportSize({ width: 390, height: 844 });
   if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth))
     throw new Error('Mobile overflow');
   if (errors.length) throw new Error(errors.join('\n'));
   console.log('PASS: mobile viewport and no browser runtime errors');
 } finally {
+  if (restoreDefaultPeerLimit)
+    await rpc.call('session-set', { 'peer-limit-per-torrent': defaultPeerLimit });
   await rpc.call('torrent-set', { ids: [id], labels: [] });
   await Bun.sleep(2500);
   await rpc.call('torrent-remove', { ids: [id], 'delete-local-data': true });

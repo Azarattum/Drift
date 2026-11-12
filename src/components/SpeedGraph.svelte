@@ -69,20 +69,35 @@
   const tick = time;
 </script>
 
-<section class="speed-chart" aria-label="Transfer speed history" bind:clientWidth={width}>
+{#snippet timeRange()}
+  <select aria-label="Chart time range" bind:value={windowMinutes}
+    ><option value={2}>2 min</option><option value={15}>15 min</option><option value={60}
+      >1 hour</option
+    ></select
+  >
+{/snippet}
+
+<section
+  class="speed-chart"
+  class:expanded
+  aria-label="Transfer speed history"
+  bind:clientWidth={width}
+>
   <div class="chart-heading">
-    <h2>Transfer activity</h2>
-    <div class="chart-legend">
-      <span class="download"><ArrowDown size={15} /><b>{speed(current?.down)}</b></span><span
-        class="upload"><ArrowUp size={15} /><b>{speed(current?.up)}</b></span
-      >
-      <select aria-label="Chart time range" bind:value={windowMinutes}
-        ><option value={2}>2 min</option><option value={15}>15 min</option><option value={60}
-          >1 hour</option
-        ></select
-      >
-    </div>
+    <h2>{expanded ? 'Transfer speed' : 'Transfer activity'}</h2>
+    {#if expanded}{@render timeRange()}{:else}<div class="chart-legend">
+        <span class="download"><ArrowDown size={15} /><b>{speed(current?.down)}</b></span><span
+          class="upload"><ArrowUp size={15} /><b>{speed(current?.up)}</b></span
+        >
+        {@render timeRange()}
+      </div>{/if}
   </div>
+  {#if expanded}<div class="expanded-rates chart-legend">
+      <div>
+        <span>Download</span><b class="download"><ArrowDown size={18} />{speed(current?.down)}</b>
+      </div>
+      <div><span>Upload</span><b class="upload"><ArrowUp size={18} />{speed(current?.up)}</b></div>
+    </div>{/if}
   {#if hasActivity}<div
       class="chart-plot"
       role="slider"

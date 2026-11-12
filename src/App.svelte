@@ -85,6 +85,9 @@
     password = $state('');
   let sessionDraft = $state<Record<string, any>>({}),
     saving = $state(false);
+  let sessionPending = $derived(
+    Object.keys(client.optionDrafts).some((key) => key.startsWith('session:')),
+  );
   let theme = $state(preference('drift.theme') || 'system');
   const filters: { id: Filter; label: string; icon: typeof Layers }[] = [
     { id: 'all', label: 'All transfers', icon: Layers },
@@ -288,6 +291,7 @@
       const u = new URL(endpoint, location.href);
       if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password)
         throw new Error('Use an http(s) URL; enter credentials in the fields below');
+      await client.settleOptions();
       if (client.rpc.endpoint !== u.href) client.resetHistory();
       client.rpc.endpoint = u.href;
       client.rpc.username = username;
@@ -300,55 +304,6 @@
       client.toast('Connected to Transmission');
     } catch (e) {
       client.toast(e instanceof Error ? e.message : 'Could not connect');
-    } finally {
-      saving = false;
-    }
-  }
-  async function saveSession() {
-    saving = true;
-    try {
-      const allowed = [
-        'download-dir',
-        'incomplete-dir',
-        'incomplete-dir-enabled',
-        'rename-partial-files',
-        'start-added-torrents',
-        'speed-limit-down-enabled',
-        'speed-limit-down',
-        'speed-limit-up-enabled',
-        'speed-limit-up',
-        'alt-speed-enabled',
-        'alt-speed-down',
-        'alt-speed-up',
-        'download-queue-enabled',
-        'download-queue-size',
-        'seed-queue-enabled',
-        'seed-queue-size',
-        'seedRatioLimited',
-        'seedRatioLimit',
-        'idle-seeding-limit-enabled',
-        'idle-seeding-limit',
-        'peer-port',
-        'port-forwarding-enabled',
-        'peer-limit-global',
-        'peer-limit-per-torrent',
-        'encryption',
-        'dht-enabled',
-        'pex-enabled',
-        'lpd-enabled',
-        'utp-enabled',
-        'blocklist-enabled',
-        'blocklist-url',
-      ];
-      const args = Object.fromEntries(
-        allowed.filter((k) => sessionDraft[k] !== undefined).map((k) => [k, sessionDraft[k]]),
-      );
-      await client.rpc.call('session-set', args);
-      await client.poll(true);
-      client.toast('Settings saved');
-      modal = null;
-    } catch (e) {
-      client.toast(String(e));
     } finally {
       saving = false;
     }
@@ -535,15 +490,17 @@
             ? { Limits: 'Bandwidth', Transfers: 'Downloads' }[settingsTab] || settingsTab
             : 'Settings'}
         </h1>
-        {#if mobileSettingsDetail && settingsTab !== 'Appearance'}<button
+        {#if mobileSettingsDetail && settingsTab === 'Connection'}<button
             class="settings-save"
-            aria-label={settingsTab === 'Connection' ? 'Connect' : 'Save changes'}
-            disabled={saving || (settingsTab !== 'Connection' && !client.online)}
+            aria-label="Connect"
+            disabled={saving}
             onclick={() =>
               document
                 .querySelector<HTMLButtonElement>('.settings-mobile .settings-submit')
-                ?.click()}
-            >{saving ? 'Saving…' : settingsTab === 'Connection' ? 'Connect' : 'Save'}</button
+                ?.click()}>{saving ? 'Connecting…' : 'Connect'}</button
+          >{:else if mobileSettingsDetail && sessionPending}<span
+            class="option-save-state"
+            role="status">Saving…</span
           >{/if}
       </header>
       <div class="mobile-page-scroll mobile-settings">{@render settingsContent()}</div>
@@ -565,31 +522,33 @@
           samples={client.samples}
           expanded
         />
-        <div class="activity-stats">
-          <div>
-            <span>Downloaded this session</span><b
-              >{bytes(client.stats['current-stats']?.downloadedBytes || 0)}</b
-            >
-          </div>
-          <div>
-            <span>Uploaded this session</span><b
-              >{bytes(client.stats['current-stats']?.uploadedBytes || 0)}</b
-            >
-          </div>
-        </div>
-        <div class="section-heading"><h2>Active transfers</h2></div>
-        {#each client.torrents.filter((t) => t.rateDownload > 0 || t.rateUpload > 0) as t (t.id)}<button
-            class="activity-transfer"
-            onclick={() => {
-              client.select(t);
-              mobileSection = 'transfers';
-            }}
-            ><span>{t.name}</span><small
-              ><span class="download">↓ {speed(t.rateDownload)}</span><span class="upload"
-                >↑ {speed(t.rateUpload)}</span
-              ></small
-            ><ChevronRight size={16} /></button
-          >{:else}<p class="hint">No data is being transferred right now.</p>{/each}
+        <section class="activity-summary" aria-label="Session totals">
+          <h2>This session</h2>
+          <dl class="activity-stats">
+            <div>
+              <dt>Downloaded</dt>
+              <dd>{bytes(client.stats['current-stats']?.downloadedBytes || 0)}</dd>
+            </div>
+            <div>
+              <dt>Uploaded</dt>
+              <dd>{bytes(client.stats['current-stats']?.uploadedBytes || 0)}</dd>
+            </div>
+          </dl>
+        </section>
+        {#if client.torrents.some((t) => t.rateDownload > 0 || t.rateUpload > 0)}
+          <div class="section-heading"><h2>Active transfers</h2></div>
+          {#each client.torrents.filter((t) => t.rateDownload > 0 || t.rateUpload > 0) as t (t.id)}<button
+              class="activity-transfer"
+              onclick={() => {
+                client.select(t);
+                mobileSection = 'transfers';
+              }}
+              ><span>{t.name}</span><small
+                ><span class="download">↓ {speed(t.rateDownload)}</span><span class="upload"
+                  >↑ {speed(t.rateUpload)}</span
+                ></small
+              ><ChevronRight size={16} /></button
+            >{/each}{/if}
       </div>
     {:else}
       <header class="topbar">
@@ -1045,7 +1004,6 @@
     {saving}
     {mobile}
     {connect}
-    save={saveSession}
   />
 {/snippet}
 {#if modal === 'settings'}<Modal title="Settings" close={() => (modal = null)} wide

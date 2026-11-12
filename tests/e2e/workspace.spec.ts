@@ -26,6 +26,15 @@ async function server(
   let failures = options.startupFailures || 0;
   const torrents = fixtures();
   const calls: { method: string; arguments: any }[] = [];
+  const session: Record<string, any> = {
+    version: '4.1.3',
+    'rpc-version': options.rpcVersion ?? 19,
+    'download-dir': '/data/Downloads',
+    'download-dir-free-space': 324000000000,
+    'peer-port': 51413,
+    'peer-limit-global': 200,
+    encryption: 'preferred',
+  };
   await page.route('**/full-speed.json*', (route) =>
     route.fulfill({
       json: features
@@ -66,7 +75,9 @@ async function server(
       case 'torrent-get':
         result = {
           torrents: targets.map((t) => {
-            const copy = { ...t };
+            const copy = Object.fromEntries(
+              Object.entries(t).filter(([key]) => !args.fields || args.fields.includes(key)),
+            );
             if ((options.rpcVersion ?? 19) < 18) delete copy.sequential_download;
             return copy;
           }),
@@ -80,15 +91,10 @@ async function server(
         };
         break;
       case 'session-get':
-        result = {
-          version: '4.1.3',
-          'rpc-version': options.rpcVersion ?? 19,
-          'download-dir': '/data/Downloads',
-          'download-dir-free-space': 324000000000,
-          'peer-port': 51413,
-          'peer-limit-global': 200,
-          encryption: 'preferred',
-        };
+        result = { ...session };
+        break;
+      case 'session-set':
+        Object.assign(session, args);
         break;
       case 'port-test':
         await new Promise((resolve) => setTimeout(resolve, options.portDelay ?? 500));
@@ -129,7 +135,7 @@ async function server(
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'All transfers' })).toBeVisible();
   if (options.waitForReady !== false) await expect(page.getByTestId('torrent-row')).toHaveCount(6);
-  return { torrents, calls };
+  return { torrents, calls, session };
 }
 
 test('stages, compact overview, graph, search, and right-click menu', async ({ page }) => {
@@ -711,9 +717,7 @@ test('recorded server history is available before opening the frontend and after
     .toBeGreaterThanOrEqual(3);
 });
 
-test('mobile settings keep the commit action reachable and submit the associated form', async ({
-  page,
-}) => {
+test('mobile global settings auto-save without a commit button', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 667 });
   const { calls } = await server(page);
   await page
@@ -722,14 +726,12 @@ test('mobile settings keep the commit action reachable and submit the associated
     .click();
   await settingsSection(page, 'Network');
   await page.getByRole('spinbutton', { name: 'Incoming port', exact: true }).fill('54321');
-  const save = page.getByRole('button', { name: 'Save changes', exact: true }),
-    box = await save.boundingBox();
-  expect(box!.y).toBeLessThan(76);
-  expect(box!.height).toBeGreaterThanOrEqual(44);
-  await save.click();
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toHaveCount(0);
   await expect
     .poll(() => calls.find((c) => c.method === 'session-set')?.arguments['peer-port'])
     .toBe(54321);
+  expect(calls.find((c) => c.method === 'session-set')?.arguments).toEqual({ 'peer-port': 54321 });
+  await expect(page.getByRole('button', { name: 'Test port', exact: true })).toBeEnabled();
 });
 
 test('single-file priorities fit and labels filter the library', async ({ page }) => {
@@ -1192,7 +1194,6 @@ test('sequential download saves and reloads the backend mode and stays hidden on
   const sequential = page.getByRole('switch', { name: /Sequential download/ });
   await expect(sequential).not.toBeChecked();
   await sequential.check();
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
   await expect
     .poll(
       () =>
@@ -1206,7 +1207,6 @@ test('sequential download saves and reloads the backend mode and stays hidden on
   await openOptions();
   await expect(sequential).toBeChecked();
   await sequential.uncheck();
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
   await expect
     .poll(() =>
       calls.some((c) => c.method === 'torrent-set' && c.arguments.sequential_download === false),
@@ -1220,4 +1220,202 @@ test('sequential download saves and reloads the backend mode and stays hidden on
       .filter((c) => c.method === 'torrent-get')
       .every((c) => !c.arguments.fields.includes('sequential_download')),
   ).toBe(true);
+});
+
+test('transfer options auto-save only valid changed fields and survive navigation', async ({
+  page,
+}) => {
+  const { calls } = await server(page);
+  await page.getByTestId('torrent-row').first().click();
+  await page.getByRole('tab', { name: 'Options', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toHaveCount(0);
+  const limit = page.getByRole('spinbutton', { name: 'Peer limit', exact: true });
+  await expect(limit).toHaveValue('25');
+  await limit.fill('');
+  await page.waitForTimeout(450);
+  await limit.fill('0');
+  await page.waitForTimeout(450);
+  expect(calls.filter((c) => c.method === 'torrent-set')).toEqual([]);
+  await limit.fill('1');
+  await limit.fill('15');
+  await limit.fill('150');
+  await expect
+    .poll(() => calls.filter((c) => c.method === 'torrent-set').map((c) => c.arguments))
+    .toEqual([{ ids: [1], 'peer-limit': 150 }]);
+  await limit.fill('175');
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await page.locator('.inspector').waitFor({ state: 'detached' });
+  await page.getByTestId('torrent-row').nth(2).click();
+  await page.getByRole('tab', { name: 'Options', exact: true }).click();
+  await page.locator('select[name=bandwidthPriority]').selectOption('1');
+  await expect
+    .poll(() =>
+      calls.some(
+        (c) =>
+          c.method === 'torrent-set' &&
+          c.arguments.ids[0] === 1 &&
+          c.arguments['peer-limit'] === 175,
+      ),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      calls.some(
+        (c) =>
+          c.method === 'torrent-set' &&
+          c.arguments.ids[0] === 3 &&
+          c.arguments.bandwidthPriority === 1,
+      ),
+    )
+    .toBe(true);
+  await expect(page.getByRole('spinbutton', { name: 'Peer limit', exact: true })).toHaveValue('25');
+});
+
+test('option auto-save serializes rapid changes and restores rejected values', async ({ page }) => {
+  const { calls, torrents } = await server(page);
+  let release: (() => void) | undefined;
+  let writes = 0;
+  let reject = false;
+  await page.route(/\/rpc$/, async (route) => {
+    const body = route.request().postDataJSON();
+    if (body.method === 'torrent-set' && 'sequential_download' in body.arguments) {
+      writes++;
+      if (writes === 1)
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      if (reject) {
+        await route.fulfill({ json: { result: 'Setting rejected', arguments: {} } });
+        return;
+      }
+    }
+    await route.fallback();
+  });
+  await page.getByTestId('torrent-row').first().click();
+  await page.getByRole('tab', { name: 'Options', exact: true }).click();
+  const sequential = page.getByRole('switch', { name: /Sequential download/ });
+  await sequential.check();
+  await expect.poll(() => writes).toBe(1);
+  await sequential.uncheck();
+  await page.waitForTimeout(200);
+  expect(writes).toBe(1);
+  await expect(sequential).not.toBeChecked();
+  release!();
+  await expect
+    .poll(() =>
+      calls.filter((c) => c.method === 'torrent-set').map((c) => c.arguments.sequential_download),
+    )
+    .toEqual([true, false]);
+  await expect.poll(() => torrents[0].sequential_download).toBe(false);
+  await expect(page.getByText('Saving…', { exact: true })).toHaveCount(0);
+  reject = true;
+  await sequential.check();
+  await expect(page.locator('.toast')).toContainText('Could not save transfer option');
+  await expect(sequential).not.toBeChecked();
+  expect(torrents[0].sequential_download).toBe(false);
+});
+
+test('peer diagram encodes speed and volume and keeps circle size when selected', async ({
+  page,
+}) => {
+  const { torrents } = await server(page);
+  const peers = torrents[0].peers!;
+  peers[0].rateToClient = 1000000;
+  peers[0].rateToPeer = 0;
+  peers[0].bytes_to_client = 1000;
+  peers[1].rateToClient = 10000;
+  peers[1].rateToPeer = 0;
+  peers[1].bytes_to_client = 1000000000;
+  await page.getByTestId('torrent-row').first().click();
+  await page.getByRole('tab', { name: /^Peers/ }).click();
+  const fast = page.getByRole('button', { name: 'Inspect peer 192.0.2.1 port 51413', exact: true });
+  const slow = page.getByRole('button', { name: 'Inspect peer 192.0.2.2 port 51413', exact: true });
+  const geometry = async (node: ReturnType<typeof page.getByRole>) =>
+    node.locator('.peer-dot').evaluate((el) => ({
+      distance: Math.hypot(
+        Number(el.getAttribute('cx')) - 160,
+        Number(el.getAttribute('cy')) - 132,
+      ),
+      radius: Number(el.getAttribute('r')),
+    }));
+  await expect
+    .poll(async () => (await geometry(fast)).distance < (await geometry(slow)).distance)
+    .toBe(true);
+  const a = await geometry(fast),
+    b = await geometry(slow);
+  expect(a.distance).toBeLessThan(b.distance);
+  expect(a.radius).toBeLessThan(b.radius);
+  await slow.click();
+  expect((await geometry(slow)).radius).toBe(b.radius);
+  await expect(page.locator('.peer-volumes')).toContainText('953.7 MB');
+  peers[0].rateToClient = 0;
+  await expect
+    .poll(async () => (await geometry(fast)).distance, { timeout: 10000 })
+    .toBeGreaterThan(a.distance + 10);
+});
+
+test('file menus stay inside screen edges and transfer hover states change together', async ({
+  page,
+}) => {
+  await server(page);
+  const row = page.getByTestId('torrent-row').first();
+  await row.hover();
+  const actions = row.locator('.row-actions');
+  await expect(actions).toHaveCSS('transition-duration', '0s');
+  await expect(actions.locator('.row-menu')).toHaveCSS('transition-duration', '0s');
+  expect(await actions.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(
+    await row.evaluate((el) => getComputedStyle(el).backgroundColor),
+  );
+  await row.click();
+  await page.getByRole('tab', { name: 'Files', exact: true }).click();
+  await page.getByRole('treeitem').last().locator('.file-actions').click();
+  const menu = page.getByRole('menu', { name: 'File actions', exact: true });
+  const bounds = (await menu.boundingBox())!;
+  expect(bounds.x).toBeGreaterThanOrEqual(12);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(1428);
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(948);
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.getByRole('treeitem').last().locator('.file-actions').click();
+  const phone = (await menu.boundingBox())!;
+  expect(phone.x).toBeGreaterThanOrEqual(12);
+  expect(phone.x + phone.width).toBeLessThanOrEqual(308);
+  expect(phone.y).toBeGreaterThanOrEqual(0);
+});
+
+test('global settings save switches, selections, and completed text edits with failure recovery', async ({
+  page,
+}) => {
+  const { calls, session } = await server(page);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await settingsSection(page, 'Transfers');
+  const folder = page.getByRole('textbox', { name: 'Download folder', exact: true });
+  await folder.fill('/data/Movies');
+  await page.waitForTimeout(450);
+  expect(calls.some((c) => c.method === 'session-set')).toBe(false);
+  await page.getByRole('heading', { name: 'Storage', exact: true }).click();
+  await expect.poll(() => session['download-dir']).toBe('/data/Movies');
+  await page.getByRole('switch', { name: 'Start automatically', exact: true }).check();
+  await expect.poll(() => session['start-added-torrents']).toBe(true);
+  await settingsSection(page, 'Network');
+  await page.getByRole('combobox', { name: 'Encryption', exact: true }).selectOption('required');
+  await expect.poll(() => session.encryption).toBe('required');
+  await page.route(/\/rpc$/, async (route) => {
+    const body = route.request().postDataJSON();
+    if (body.method === 'session-set' && body.arguments.encryption === 'tolerated')
+      await route.fulfill({ json: { result: 'Setting rejected', arguments: {} } });
+    else await route.fallback();
+  });
+  await page.getByRole('combobox', { name: 'Encryption', exact: true }).selectOption('tolerated');
+  await expect(page.getByRole('combobox', { name: 'Encryption', exact: true })).toHaveValue(
+    'required',
+  );
+  await expect(page.locator('.toast')).toContainText('Could not save setting');
+  await expect(page.locator('.settings-save-error')).toBeVisible();
+  expect(calls.filter((c) => c.method === 'session-set').map((c) => c.arguments)).toEqual([
+    { 'download-dir': '/data/Movies' },
+    { 'start-added-torrents': true },
+    { encryption: 'required' },
+  ]);
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toHaveCount(0);
 });

@@ -6,6 +6,13 @@ import { Transmission } from './rpc';
 import { stage } from './stage';
 import type { Capabilities, Filter, Sample, Torrent } from './types';
 
+type OptionQueue = {
+  values: Record<string, number | boolean | string>;
+  at: number;
+  running?: Promise<void>;
+  timer?: ReturnType<typeof setTimeout>;
+};
+
 const overviewFields = [
   'id',
   'hashString',
@@ -96,6 +103,10 @@ export class Client {
   private polling = false;
   private lastSample = 0;
   private lastDetail = 0;
+  private detailRequest = 0;
+  private sessionRequest = 0;
+  private optionQueues = new Map<number | 'session', OptionQueue>();
+  optionDrafts = $state<Record<string, number | boolean | string>>({});
   private lastSession = 0;
   private lastCapabilityProbe = 0;
   private noticeTimer?: ReturnType<typeof setTimeout>;
@@ -178,8 +189,7 @@ export class Client {
         this.lastSample = now;
       }
       if (force || now - this.lastSession > 15000) {
-        this.session = await this.rpc.call('session-get');
-        this.lastSession = now;
+        await this.loadSession();
       }
       if (
         this.focused &&
@@ -198,7 +208,83 @@ export class Client {
       this.polling = false;
     }
   }
+  queueOption(id: number | 'session', key: string, value: number | boolean | string, delay = 0) {
+    let queue = this.optionQueues.get(id);
+    if (!queue) {
+      queue = { values: {}, at: 0 };
+      this.optionQueues.set(id, queue);
+    }
+    queue.values[key] = value;
+    queue.at = Date.now() + delay;
+    this.optionDrafts = { ...this.optionDrafts, [`${id}:${key}`]: value };
+    clearTimeout(queue.timer);
+    queue.timer = setTimeout(() => void this.sendOptions(id), delay);
+  }
+  flushOptions(id: number | 'session') {
+    const queue = this.optionQueues.get(id);
+    if (!queue) return;
+    queue.at = 0;
+    void this.sendOptions(id);
+  }
+  async settleOptions() {
+    while (this.optionQueues.size) {
+      for (const queue of this.optionQueues.values()) queue.at = 0;
+      await Promise.all([...this.optionQueues.keys()].map((id) => this.sendOptions(id)));
+    }
+  }
+  private sendOptions(id: number | 'session'): Promise<void> {
+    const queue = this.optionQueues.get(id);
+    if (!queue) return Promise.resolve();
+    if (queue.running) return queue.running;
+    clearTimeout(queue.timer);
+    const values = queue.values;
+    if (!Object.keys(values).length) return Promise.resolve();
+    queue.values = {};
+    queue.running = (async () => {
+      try {
+        if (id === 'session') {
+          await this.rpc.call('session-set', values);
+          this.sessionRequest++;
+          this.session = { ...this.session, ...values };
+          await this.loadSession().catch(() => {});
+        } else {
+          await this.rpc.call('torrent-set', { ids: [id], ...values });
+          // Invalidate reads that began before the acknowledgement.
+          if (this.details?.id === id) this.details = { ...this.details, ...values };
+          if (this.focused?.id === id) {
+            this.detailRequest++;
+            await this.loadDetails(id);
+          }
+        }
+      } catch (e) {
+        this.toast(
+          `Could not save ${id === 'session' ? 'setting' : 'transfer option'}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      } finally {
+        const drafts = { ...this.optionDrafts };
+        for (const key of Object.keys(values))
+          if (!(key in queue.values)) delete drafts[`${id}:${key}`];
+        this.optionDrafts = drafts;
+        queue.running = undefined;
+        clearTimeout(queue.timer);
+        if (Object.keys(queue.values).length)
+          queue.timer = setTimeout(
+            () => void this.sendOptions(id),
+            Math.max(0, queue.at - Date.now()),
+          );
+        else this.optionQueues.delete(id);
+      }
+    })();
+    return queue.running;
+  }
+  private async loadSession() {
+    const request = ++this.sessionRequest;
+    const session = await this.rpc.call('session-get');
+    if (request === this.sessionRequest) this.session = session;
+    this.lastSession = Date.now();
+  }
   async loadDetails(id: number) {
+    const request = ++this.detailRequest;
     try {
       const r = await this.rpc.call('torrent-get', {
         ids: [id],
@@ -208,7 +294,8 @@ export class Client {
           ...(Number(this.session['rpc-version']) >= 18 ? ['sequential_download'] : []),
         ],
       });
-      if (this.selected.at(-1) === id) this.details = r.torrents[0] || null;
+      if (this.selected.at(-1) === id && request === this.detailRequest)
+        this.details = r.torrents[0] || null;
       this.lastDetail = Date.now();
     } catch (e) {
       this.toast(String(e));

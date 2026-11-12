@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import {
     Cable,
     Download,
@@ -10,6 +11,7 @@
     CircleAlert,
     RefreshCw,
     ChevronRight,
+    X,
   } from '@lucide/svelte';
   import { client } from '../lib/client.svelte';
   let {
@@ -23,7 +25,6 @@
     mobile = false,
     showDetail = $bindable(false),
     connect,
-    save,
   }: {
     section?: string;
     draft?: Record<string, any>;
@@ -35,15 +36,28 @@
     mobile?: boolean;
     showDetail?: boolean;
     connect: () => void;
-    save: () => void;
   } = $props();
   const formId = $props.id();
   let portState = $state<'idle' | 'testing' | 'open' | 'closed' | 'error'>('idle');
   let portMessage = $state('');
-  let testedPort = 0;
+  let testedPort = $state(0);
   let blocklistBusy = $state(false);
   let blocklistMessage = $state('');
+  let editing = $state('');
+  let pending = $derived(
+    Object.keys(client.optionDrafts).some((key) => key.startsWith('session:')),
+  );
   const unsavedPort = $derived(Number(draft['peer-port']) !== Number(client.session['peer-port']));
+  $effect(() => {
+    if (
+      portState !== 'idle' &&
+      portState !== 'testing' &&
+      testedPort !== Number(client.session['peer-port'])
+    ) {
+      portState = 'idle';
+      portMessage = '';
+    }
+  });
   const sections = [
     { name: 'Connection', icon: Cable },
     { name: 'Limits', label: 'Bandwidth', icon: Gauge },
@@ -272,6 +286,43 @@
       },
     ],
   };
+  const fields = new Map(
+    Object.values(groups)
+      .flatMap((group) => group.flatMap((g) => g.fields))
+      .map((field) => [field.key, field]),
+  );
+  $effect(() => {
+    const values = { ...client.session };
+    const drafts = client.optionDrafts;
+    const active = editing;
+    untrack(() => {
+      for (const key of fields.keys()) {
+        if (`session:${key}` in drafts) draft[key] = drafts[`session:${key}`];
+        else if (key !== active && key in values) draft[key] = values[key];
+      }
+    });
+  });
+  function changeSetting(event: Event) {
+    const input = event.target as HTMLInputElement | HTMLSelectElement;
+    const field = fields.get(input.name);
+    if (
+      !field ||
+      !input.validity.valid ||
+      !client.online ||
+      (field.kind === 'text' && event.type === 'input')
+    )
+      return;
+    const value =
+      field.kind === 'toggle'
+        ? (input as HTMLInputElement).checked
+        : field.kind === 'number'
+          ? Number(input.value)
+          : input.value;
+    if (typeof value === 'number' && (input.value === '' || !Number.isFinite(value))) return;
+    if (value === (client.optionDrafts[`session:${input.name}`] ?? client.session[input.name]))
+      return;
+    client.queueOption('session', input.name, value, field.kind === 'number' ? 400 : 0);
+  }
   async function portTest() {
     if (portState === 'testing' || unsavedPort) return;
     testedPort = Number(client.session['peer-port']);
@@ -293,6 +344,7 @@
     blocklistBusy = true;
     blocklistMessage = 'Updating…';
     try {
+      await client.settleOptions();
       const r = await client.rpc.call('blocklist-update');
       blocklistMessage = `Updated · ${Number(r['blocklist-size']).toLocaleString()} entries`;
     } catch (e) {
@@ -304,6 +356,17 @@
 </script>
 
 <div class="settings-layout" class:settings-mobile={mobile}>
+  {#if !mobile && client.notice.startsWith('Could not save setting:')}<div
+      class="settings-save-error"
+      role="alert"
+    >
+      <span>{client.notice}</span><button
+        type="button"
+        class="icon-button"
+        aria-label="Dismiss save error"
+        onclick={() => (client.notice = '')}><X size={16} /></button
+      >
+    </div>{/if}
   {#if mobile && !showDetail}
     <nav class="settings-index" aria-label="Settings sections">
       {#each sections as item}<button
@@ -330,6 +393,7 @@
     <div class="settings-main">
       <div class="settings-page-title">
         <h2>{sections.find((x) => x.name === section)?.label || section}</h2>
+        {#if pending}<span class="option-save-state" role="status">Saving…</span>{/if}
       </div>
       {#if section === 'Connection'}
         <form
@@ -416,11 +480,18 @@
             </dl>
           </details>{/if}
       {:else}
-        <form
-          id={formId}
-          onsubmit={(e) => {
-            e.preventDefault();
-            save();
+        <fieldset
+          class="settings-fields"
+          disabled={!client.online || !client.session.version}
+          oninput={changeSetting}
+          onchange={changeSetting}
+          onfocusin={(e) => {
+            const input = e.target as HTMLInputElement;
+            editing = input.type === 'checkbox' || input.tagName === 'SELECT' ? '' : input.name;
+          }}
+          onfocusout={() => {
+            editing = '';
+            client.flushOptions('session');
           }}
         >
           {#if section === 'Limits' && client.fullSpeedAvailable}<p class="settings-notice">
@@ -441,10 +512,12 @@
                       {#if field.kind === 'toggle'}<input
                           type="checkbox"
                           role="switch"
+                          name={field.key}
                           aria-label={field.title}
                           bind:checked={draft[field.key]}
                         />
                       {:else if field.kind === 'select'}<select
+                          name={field.key}
                           aria-label={field.title}
                           bind:value={draft[field.key]}
                           >{#each field.choices || [] as [value, label]}<option {value}
@@ -455,6 +528,8 @@
                           ><input
                             aria-label={field.title}
                             type="number"
+                            name={field.key}
+                            required
                             min={field.key === 'peer-port' || field.key.includes('peer-limit')
                               ? 1
                               : 0}
@@ -465,6 +540,9 @@
                         >
                       {:else}<input
                           class="input"
+                          name={field.key}
+                          required
+                          type={field.key === 'blocklist-url' ? 'url' : 'text'}
                           aria-label={field.title}
                           bind:value={draft[field.key]}
                           spellcheck="false"
@@ -482,7 +560,9 @@
                           portState === 'closed' ||
                           portState === 'error'}
                         >{unsavedPort
-                          ? 'Save before testing.'
+                          ? 'session:peer-port' in client.optionDrafts
+                            ? 'Saving port…'
+                            : 'Enter a valid port.'
                           : portState === 'idle'
                             ? 'Test incoming connections.'
                             : portState === 'error'
@@ -523,33 +603,23 @@
                   </div>{/if}
               </div>
             </section>{/each}
-        </form>
+        </fieldset>
       {/if}
     </div>
-    {#if mobile && section !== 'Appearance'}<button
+    {#if mobile && section === 'Connection'}<button
         class="settings-submit"
         hidden
         type="submit"
-        form={formId}>Save</button
+        form={formId}>Connect</button
       >{/if}
-    {#if !mobile && section !== 'Appearance'}<footer class="settings-commit">
-        {#if section === 'Connection'}<span class="connection-badge"
-            ><i class="status-dot" class:success={client.online}></i>Transmission {String(
-              client.session.version || '—',
-            ).split(' ')[0]}</span
-          >{:else}<span class="hint">Changes apply to the server.</span>{/if}
-        <button
-          class="button primary"
-          type="submit"
-          form={formId}
-          disabled={saving || (section !== 'Connection' && !client.online)}
-          >{saving
-            ? section === 'Connection'
-              ? 'Connecting…'
-              : 'Saving…'
-            : section === 'Connection'
-              ? 'Connect'
-              : 'Save changes'}</button
+    {#if !mobile && section === 'Connection'}<footer class="settings-commit">
+        <span class="connection-badge"
+          ><i class="status-dot" class:success={client.online}></i>Transmission {String(
+            client.session.version || '—',
+          ).split(' ')[0]}</span
+        >
+        <button class="button primary" type="submit" form={formId} disabled={saving}
+          >{saving ? 'Connecting…' : 'Connect'}</button
         >
       </footer>{/if}
   {/if}

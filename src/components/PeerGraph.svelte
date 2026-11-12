@@ -1,32 +1,23 @@
 <script lang="ts">
   import { ArrowDown, ArrowUp, X, Network } from '@lucide/svelte';
   import type { Peer } from '../lib/types';
-  import { percent, speed } from '../lib/format';
+  import { bytes, percent, speed } from '../lib/format';
+  import { peerKey as key, peerPlot } from '../lib/peer-plot';
   let {
     peers,
     chosen = $bindable<string | null>(null),
     compact = false,
   }: { peers: Peer[]; chosen?: string | null; compact?: boolean } = $props();
-  const key = (p: Peer) => `${p.address}:${p.port}`;
-  let visible = $derived.by(() => {
-    const list = peers.slice(0, compact ? 8 : 48);
-    const chosenPeer = peers.find((p) => key(p) === chosen);
-    if (chosenPeer && !list.includes(chosenPeer)) list[list.length - 1] = chosenPeer;
-    return list;
-  });
+  let visible = $derived(peerPlot(peers, compact, chosen));
   const center = $derived(compact ? 96 : 132);
   let selected = $derived(peers.find((p) => key(p) === chosen));
   $effect(() => {
     if (chosen && !peers.some((p) => key(p) === chosen)) chosen = null;
   });
-  function point(i: number) {
-    const angle = (i / Math.max(1, visible.length)) * Math.PI * 2 - Math.PI / 2;
-    const r = compact ? (i % 2 === 0 ? 70 : 50) : i % 2 === 0 ? 105 : 85;
-    return { x: 160 + Math.cos(angle) * r, y: center + Math.sin(angle) * r };
-  }
 </script>
 
 <div class="peer-map" class:compact class:empty={!peers.length}>
+  {#if peers.length}<p class="peer-encoding">Closer = faster · Size = downloaded (2 min)</p>{/if}
   <div class="peer-visualization">
     {#if !peers.length}<div class="panel-empty">
         <Network size={26} /><b>No peer connections yet</b><span
@@ -35,7 +26,7 @@
       </div>{:else}<svg
         viewBox={`0 0 320 ${compact ? 192 : 264}`}
         role="group"
-        aria-label={`${peers.length} connected peers. Blue connections are downloading, teal are uploading.`}
+        aria-label={`${peers.length} connected peers. Faster connections are closer to the center. Larger circles have downloaded more in the last two minutes. Blue is download, teal is upload.`}
       >
         <circle cx="160" cy={center} r={compact ? 70 : 105} class="orbit" /><circle
           cx="160"
@@ -43,8 +34,8 @@
           r={compact ? 40 : 63}
           class="orbit"
         />
-        {#each visible as p, i (p.address + ':' + p.port)}
-          {@const pos = point(i)}
+        {#each visible as pos (pos.key)}
+          {@const p = pos.peer}
           <line
             x1="160"
             y1={center}
@@ -54,16 +45,16 @@
             stroke-width={p.rateToClient || p.rateToPeer ? 1.3 : 0.6}
             opacity={chosen && chosen !== key(p) ? 0.2 : 0.7}
           />
-          {#if p.rateToClient || p.rateToPeer}<circle
-              r="2"
-              fill={p.rateToClient ? 'var(--blue)' : 'var(--teal)'}
-              class="peer-packet"
-              ><animateMotion
-                dur={`${Math.max(1, 4 - (p.rateToClient + p.rateToPeer) / 500000)}s`}
-                repeatCount="indefinite"
-                path={`M ${p.rateToClient ? pos.x : 160} ${p.rateToClient ? pos.y : center} L ${p.rateToClient ? 160 : pos.x} ${p.rateToClient ? center : pos.y}`}
-              /></circle
-            >{/if}
+          {#each [{ rate: p.rateToClient, down: true }, { rate: p.rateToPeer, down: false }] as direction}{#if direction.rate > 0}<circle
+                r="2"
+                fill={direction.down ? 'var(--blue)' : 'var(--teal)'}
+                class="peer-packet"
+                ><animateMotion
+                  dur={`${Math.max(1, 4 - direction.rate / 500000)}s`}
+                  repeatCount="indefinite"
+                  path={`M ${direction.down ? pos.x : 160} ${direction.down ? pos.y : center} L ${direction.down ? 160 : pos.x} ${direction.down ? center : pos.y}`}
+                /></circle
+              >{/if}{/each}
           <g
             role="button"
             tabindex="0"
@@ -80,30 +71,47 @@
             }}
             onclick={() => (chosen = chosen === key(p) ? null : key(p))}
           >
-            <title>{p.address} · {p.clientName} · {percent(p.progress)}</title><circle
+            <title
+              >{p.address} · ↓ {speed(p.rateToClient)} · ↑ {speed(p.rateToPeer)} · {pos.hasVolume
+                ? `${bytes(p.bytes_to_client!)} downloaded in the last 2 min`
+                : 'Download volume unavailable'}</title
+            ><circle
               class="peer-target"
               cx={pos.x}
               cy={pos.y}
-              r="26"
+              r={compact ? 26 : 18}
               fill="transparent"
-            /><circle
+            />{#if key(p) === chosen}<circle
+                class="peer-selection-ring"
+                cx={pos.x}
+                cy={pos.y}
+                r={pos.radius + 4}
+                fill="none"
+                stroke="var(--text)"
+                stroke-width="1"
+              />{/if}<circle
+              class="peer-dot"
               cx={pos.x}
               cy={pos.y}
-              r={key(p) === chosen ? 6 : 4}
-              fill={p.rateToClient ? 'var(--blue)' : p.rateToPeer ? 'var(--teal)' : 'var(--muted)'}
-              stroke="var(--surface)"
+              r={pos.radius}
+              fill={pos.hasVolume
+                ? p.rateToClient
+                  ? 'var(--blue)'
+                  : p.rateToPeer
+                    ? 'var(--teal)'
+                    : 'var(--muted)'
+                : 'var(--surface)'}
+              stroke={pos.hasVolume ? 'var(--surface)' : 'var(--muted)'}
               stroke-width="2"
             />
           </g>
         {/each}
-        <circle cx="160" cy={center} r="22" fill="var(--surface)" stroke="var(--border)" /><path
-          transform={`translate(0 ${center - 132})`}
-          d="M154 130v-5h12v5m-12 5v4h12v-4m-6-9v9m-3-3 3 3 3-3"
-          stroke="var(--text)"
-          fill="none"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
+        <circle cx="160" cy={center} r="22" fill="var(--surface)" stroke="var(--border)" /><text
+          x="160"
+          y={center + 4}
+          text-anchor="middle"
+          class="peer-center-label">You</text
+        >
       </svg>{/if}
   </div>
   <div class="peer-detail-slot">
@@ -129,6 +137,21 @@
             class="upload"><ArrowUp size={12} />{speed(selected.rateToPeer)}</span
           >
         </div>
+        <dl class="peer-volumes" aria-label="Data transferred in the last two minutes">
+          <div>
+            <dt>Downloaded</dt>
+            <dd>
+              {typeof selected.bytes_to_client === 'number' ? bytes(selected.bytes_to_client) : '—'}
+            </dd>
+          </div>
+          <div>
+            <dt>Uploaded</dt>
+            <dd>
+              {typeof selected.bytes_to_peer === 'number' ? bytes(selected.bytes_to_peer) : '—'}
+            </dd>
+          </div>
+        </dl>
+        <small class="peer-volume-period">Last 2 minutes</small>
       </div>{/if}{#if !selected}<p class="peer-selection-hint">Select a connection</p>{/if}
   </div>
   {#if peers.length}<div class="peer-legend">

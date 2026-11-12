@@ -69,6 +69,8 @@ export function torrent(overrides: Partial<Torrent> = {}): Torrent {
       isEncrypted: true,
       isUTP: i % 2 === 0,
       isIncoming: false,
+      bytes_to_client: i * 90000000,
+      bytes_to_peer: (7 - i) * 18000000,
     })),
     'peer-limit': 25,
     bandwidthPriority: 0,

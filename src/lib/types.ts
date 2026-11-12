@@ -24,6 +24,8 @@ export type Peer = {
   isEncrypted: boolean;
   isUTP: boolean;
   isIncoming: boolean;
+  bytes_to_client?: number;
+  bytes_to_peer?: number;
 };
 export type TorrentFile = { name: string; length: number; bytesCompleted: number };
 export type FileStat = { wanted: boolean; priority: number; bytesCompleted: number };

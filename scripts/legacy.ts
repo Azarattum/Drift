@@ -7,6 +7,12 @@ import { fixtures } from '../tests/fixtures';
 
 const torrents = fixtures();
 const calls: { method: string; arguments: any }[] = [];
+const session: Record<string, any> = {
+  version: '4.1.3',
+  'rpc-version': 19,
+  'download-dir': '/data/Downloads',
+  'download-dir-free-space': 300000000000,
+};
 const root = resolve('dist');
 if (!(await Bun.file(resolve(root, 'index.html')).exists())) throw new Error('Build first');
 const server = Bun.serve({
@@ -27,15 +33,19 @@ const server = Bun.serve({
       let result: any = {};
       switch (body.method) {
         case 'torrent-get':
-          result = { torrents: targets };
+          result = {
+            torrents: targets.map((t) =>
+              Object.fromEntries(
+                Object.entries(t).filter(([key]) => !args.fields || args.fields.includes(key)),
+              ),
+            ),
+          };
           break;
         case 'session-get':
-          result = {
-            version: '4.1.3',
-            'rpc-version': 19,
-            'download-dir': '/data/Downloads',
-            'download-dir-free-space': 300000000000,
-          };
+          result = { ...session };
+          break;
+        case 'session-set':
+          Object.assign(session, args);
           break;
         case 'session-stats':
           result = { downloadSpeed: 2400000, uploadSpeed: 640000, torrentCount: torrents.length };
@@ -178,7 +188,6 @@ try {
   await audit();
   await page.locator('[role="tab"]').nth(4).click();
   await page.locator('label', { hasText: 'Sequential download' }).locator('input').check();
-  await page.locator('[aria-label="Save changes"]').click();
   await page.waitForTimeout(250);
   assert(calls.some((c) => c.method === 'torrent-set' && c.arguments.sequential_download === true));
   await audit();
@@ -228,6 +237,20 @@ try {
   assert((await page.locator('.chart-legend').textContent())?.includes('MB/s'));
   await page.screenshot({ path: 'test-results/ios15.4-activity.png' });
   await page.locator('.mobile-tabbar button').nth(2).click();
+  await page.locator('.settings-index button', { hasText: 'Downloads' }).click();
+  await page.locator('input[aria-label="Download folder"]').fill('/data/Movies');
+  await page.locator('h3', { hasText: 'Storage' }).click();
+  await page.waitForTimeout(250);
+  assert(
+    calls.some((c) => c.method === 'session-set' && c.arguments['download-dir'] === '/data/Movies'),
+  );
+  assert.equal(
+    await page.locator('input[aria-label="Download folder"]').inputValue(),
+    '/data/Movies',
+  );
+  assert.equal(await page.locator('[aria-label="Save changes"]').count(), 0);
+  await audit();
+  await page.locator('[aria-label="Back to settings"]').click();
   await page.locator('.settings-index button', { hasText: 'Appearance' }).click();
   await page.locator('select[aria-label="Color theme"]').selectOption('dark');
   assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
