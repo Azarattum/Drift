@@ -16,7 +16,6 @@
 </script>
 
 <div class="peer-map" class:compact class:empty={!peers.length}>
-  {#if peers.length}<p class="peer-encoding">Closer = faster · Size = downloaded (1 min)</p>{/if}
   <div class="peer-visualization">
     {#if !peers.length}<div class="panel-empty">
         <Network size={26} /><b>No peer connections yet</b><span

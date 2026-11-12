@@ -72,6 +72,14 @@
   let collapsed = $state(new Set<string>());
   let fileQuery = $state('');
   let chosenPeer = $state<string | null>(null);
+  function peerClient(name: string) {
+    if (/qbittorrent/i.test(name)) return 'qB';
+    if (/transmission/i.test(name)) return 'Tr';
+    if (/deluge/i.test(name)) return 'De';
+    if (/utorrent|µtorrent|μtorrent/i.test(name)) return 'µT';
+    if (/libtorrent/i.test(name)) return 'LT';
+    return 'BT';
+  }
   $effect(() => {
     const selected = chosenPeer;
     if (selected)
@@ -676,10 +684,14 @@
                     {p.address}{#if p.isEncrypted}<ShieldCheck size={11} />{/if}
                   </span>
                   <small
-                    >{p.clientName || 'Unknown'} · {p.port} · {p.isUTP ? 'µTP' : 'TCP'}{p.isIncoming
-                      ? ' · Incoming'
-                      : ''}</small
-                  ></span
+                    class="peer-client-line"
+                    title={`${p.clientName || 'Unknown client'} · Port ${p.port} · ${p.isUTP ? 'µTP' : 'TCP'}${p.isIncoming ? ' · Incoming' : ''}`}
+                  >
+                    <span class="peer-client-badge" aria-label={p.clientName || 'Unknown client'}
+                      >{peerClient(p.clientName || '')}</span
+                    >
+                    <span>{p.port}</span><span>{p.isUTP ? 'µTP' : 'TCP'}</span>
+                  </small></span
                 ><span>{percent(p.progress)}</span><span class="download"
                   >{speed(p.rateToClient)}<small
                     >{p.bytes_to_client === undefined ? '—' : bytes(p.bytes_to_client)} received</small

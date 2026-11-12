@@ -819,7 +819,10 @@ test('peer rows and diagram share selection including peers at the same address'
   expect(await rowPositions()).toEqual(rowsBefore);
   await expect(connection).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.peer-row[aria-pressed="true"]')).toContainText('50001');
-  await expect(page.locator('.peer-row[aria-pressed="true"]')).toContainText('A second connection');
+  await expect(page.locator('.peer-row[aria-pressed="true"] .peer-client-line')).toHaveAttribute(
+    'title',
+    /A second connection/,
+  );
   await expect(
     page.getByRole('button', { name: 'Inspect peer 192.0.2.1 port 50001', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true');
@@ -1426,4 +1429,15 @@ test('global settings save switches, selections, and completed text edits with f
     { encryption: 'required' },
   ]);
   await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toHaveCount(0);
+});
+
+test('hover actions never overlap transfer speeds or ETA', async ({ page }) => {
+  await server(page);
+  const row = page.getByTestId('torrent-row').first();
+  await row.hover();
+  const actions = (await row.locator('.row-actions').boundingBox())!;
+  for (const metric of [row.locator('.row-speeds'), row.locator('.row-eta')]) {
+    const box = (await metric.boundingBox())!;
+    expect(box.x + box.width).toBeLessThanOrEqual(actions.x);
+  }
 });

@@ -1613,7 +1613,7 @@ input[role='switch']:checked::after {
   font-size: 12px;
   line-height: 1.7;
   color: var(--secondary);
-  padding: 12px 0 0 14px;
+  padding: 12px 0 14px 14px;
 }
 .tracker-extra > div {
   display: flex;
@@ -2230,6 +2230,23 @@ dialog[data-closing='true']::backdrop {
 .torrent-row.selected .row-actions {
   background: inherit;
 }
+@media (min-width: 901px) {
+  .torrent-row {
+    grid-template-columns: 32px minmax(0, 1fr) auto auto;
+  }
+  .row-actions {
+    display: none;
+    position: static;
+    transform: none;
+    grid-column: 4;
+    grid-row: 1;
+  }
+  .torrent-row:hover .row-actions,
+  .torrent-row:focus-within .row-actions,
+  .torrent-row.menu-open .row-actions {
+    display: flex;
+  }
+}
 .sort-label {
   font-size: 13px;
   color: var(--secondary);
@@ -2241,7 +2258,7 @@ dialog[data-closing='true']::backdrop {
   align-items: center;
   margin-bottom: 12px;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto 220px auto;
+  grid-template-rows: 220px auto;
 }
 .peer-visualization {
   min-width: 0;
@@ -3349,6 +3366,29 @@ input[type='number']::-webkit-outer-spin-button {
   color: var(--secondary);
   font-size: 12px;
   margin-top: 4px;
+}
+.peer-row {
+  min-height: 72px;
+}
+.peer-row .peer-client-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  line-height: 20px;
+}
+.peer-client-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 20px;
+  flex: 0 0 24px;
+  border-radius: 4px;
+  background: var(--hover);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
 }
 .peer-list > .hint {
   padding: 20px 0;
