@@ -1,8 +1,16 @@
 <script lang="ts">
   import { ArrowUp, ArrowDown, ArrowUpToLine, ArrowDownToLine } from '@lucide/svelte';
+  import { client } from '../lib/client.svelte';
   import type { Torrent } from '../lib/types';
   let { torrents, move }: { torrents: Torrent[]; move: (method: string) => void } = $props();
-  let positions = $derived(torrents.map((t) => t.queuePosition + 1).sort((a, b) => a - b));
+  let downloads = $derived(
+    client.torrents
+      .filter((t) => t.percentDone < 1)
+      .sort((a, b) => a.queuePosition - b.queuePosition || a.id - b.id),
+  );
+  let positions = $derived(
+    torrents.map((t) => downloads.findIndex((d) => d.id === t.id) + 1).sort((a, b) => a - b),
+  );
 </script>
 
 <div class="queue-control" role="group" aria-label="Download queue">
@@ -17,6 +25,10 @@
     {#each [{ method: 'queue-move-top', label: 'First', title: 'Move to top', icon: ArrowUpToLine }, { method: 'queue-move-up', label: 'Up', title: 'Move up', icon: ArrowUp }, { method: 'queue-move-down', label: 'Down', title: 'Move down', icon: ArrowDown }, { method: 'queue-move-bottom', label: 'Last', title: 'Move to bottom', icon: ArrowDownToLine }] as action}
       <button
         type="button"
+        disabled={downloads.length <= torrents.length ||
+          (action.method === 'queue-move-top' || action.method === 'queue-move-up'
+            ? positions[0] === 1
+            : positions[positions.length - 1] === downloads.length)}
         aria-label={action.title}
         title={action.title}
         onclick={() => move(action.method)}><action.icon size={13} />{action.label}</button

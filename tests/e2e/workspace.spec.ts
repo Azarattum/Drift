@@ -1527,9 +1527,9 @@ test('queue menu shows positions and moves unfinished downloads only', async ({ 
   const queue = page.getByRole('group', { name: 'Download queue', exact: true });
   await expect(queue).toContainText(`#${torrents[0].queuePosition + 1}`);
   await expect(page.getByRole('group', { name: 'Bandwidth priority' })).toHaveCount(0);
-  await queue.getByRole('button', { name: 'Move up', exact: true }).click();
+  await queue.getByRole('button', { name: 'Move down', exact: true }).click();
   await expect
-    .poll(() => calls.find((c) => c.method === 'queue-move-up')?.arguments.ids)
+    .poll(() => calls.find((c) => c.method === 'queue-move-down')?.arguments.ids)
     .toEqual([1]);
   await page.getByTestId('torrent-row').last().click({ button: 'right' });
   await expect(queue).toHaveCount(0);
@@ -1587,4 +1587,14 @@ test('retry failed trackers with VPN is conditional and preserves labels', async
   await expect(retry).toBeDisabled();
   for (const tracker of torrents[0].trackerStats) tracker.lastAnnounceSucceeded = true;
   await expect(retry).toHaveCount(0, { timeout: 10000 });
+});
+
+test('download queue rank excludes completed torrents', async ({ page }) => {
+  const { torrents } = await server(page);
+  torrents[0].queuePosition = 5;
+  for (const torrent of torrents.slice(1)) torrent.percentDone = 1;
+  await page.getByTestId('torrent-row').first().click({ button: 'right' });
+  const queue = page.getByRole('group', { name: 'Download queue', exact: true });
+  await expect(queue.locator('b')).toHaveText('#1');
+  for (const button of await queue.getByRole('button').all()) await expect(button).toBeDisabled();
 });
