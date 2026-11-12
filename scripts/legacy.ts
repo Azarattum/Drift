@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { resolve, sep } from 'node:path';
 import { webkit } from 'playwright-legacy';
-import { fixtures } from '../tests/fixtures';
+import { fixtures, torrent } from '../tests/fixtures';
 
 const torrents = fixtures();
 const calls: { method: string; arguments: any }[] = [];
@@ -83,6 +83,45 @@ const server = Bun.serve({
   },
 });
 
+const playerMedia = Bun.file('tests/assets/playback.mp4');
+const mediaServer = Bun.serve({
+  hostname: '127.0.0.1',
+  port: server.port + 1,
+  async fetch(request) {
+    const path = new URL(request.url).pathname;
+    const headers: Record<string, string> = {
+      'Access-Control-Allow-Origin': `http://127.0.0.1:${server.port}`,
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Headers': 'X-Drift-Stream, Range',
+      'Access-Control-Allow-Methods': 'POST, GET, HEAD, OPTIONS',
+    };
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
+    if (path.startsWith('/v1/play/'))
+      return Response.json(
+        {
+          version: 1,
+          src: path.replace('/play/', '/media/'),
+          type: 'video/mp4',
+          length: playerMedia.size,
+        },
+        { headers },
+      );
+    const range = request.headers.get('Range')?.match(/bytes=(\d+)-(\d*)/);
+    const start = range ? Number(range[1]) : 0,
+      end = range?.[2] ? Math.min(playerMedia.size - 1, Number(range[2])) : playerMedia.size - 1;
+    return new Response(playerMedia.slice(start, end + 1), {
+      status: range ? 206 : 200,
+      headers: {
+        ...headers,
+        'Content-Type': 'video/mp4',
+        'Accept-Ranges': 'bytes',
+        'Content-Length': String(end - start + 1),
+        ...(range ? { 'Content-Range': `bytes ${start}-${end}/${playerMedia.size}` } : {}),
+      },
+    });
+  },
+});
+
 const browser = await webkit.launch({ headless: true });
 try {
   assert.equal(await browser.version(), '15.4', 'The legacy check must use WebKit 15.4');
@@ -98,6 +137,9 @@ try {
   page.on('pageerror', (error) => errors.push(error.message));
   await page.addInitScript(() => {
     // Some archived builds include features that shipped after the stable iOS release.
+    delete (Document.prototype as any).adoptedStyleSheets;
+    delete (ShadowRoot.prototype as any).adoptedStyleSheets;
+    delete (CSSStyleSheet.prototype as any).replaceSync;
     Object.defineProperty(AbortSignal, 'timeout', { value: undefined, configurable: true });
     Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
     document.addEventListener('copy', (e) => {
@@ -260,11 +302,48 @@ try {
   await page.locator('select[aria-label="Color theme"]').selectOption('dark');
   assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
   await audit();
+
+  torrents.push(
+    torrent({
+      id: 99,
+      hashString: 'f'.repeat(40),
+      name: 'Legacy video',
+      percentDone: 1,
+      status: 0,
+      files: [
+        { name: 'Legacy video.mp4', length: playerMedia.size, bytesCompleted: playerMedia.size },
+      ],
+    }),
+  );
+  await page.locator('.mobile-tabbar button').nth(0).click();
+  await page.locator('[data-testid="torrent-row"]', { hasText: 'Legacy video' }).click();
+  await page.locator('[aria-label="Watch video"]').click();
+  await page.locator('.drift-player video').waitFor();
+  await page.waitForFunction(() => {
+    const v = document.querySelector('video');
+    return v && v.readyState >= 2;
+  });
+  assert.equal(await page.locator('media-play-button').getAttribute('role'), 'button');
+  await page.locator('.drift-player video').evaluate((v: HTMLVideoElement) => {
+    v.pause();
+    v.currentTime = 25;
+  });
+  await page.waitForTimeout(200);
+  await audit();
+  await page.screenshot({ path: 'test-results/ios15.4-player.png' });
+  await page.locator('[aria-label="Close dialog"]').click();
+  await page.locator('dialog').waitFor({ state: 'detached' });
+  await page.locator('[aria-label="Watch video"]').click();
+  await page.locator('button', { hasText: 'Resume from 0:25' }).click();
+  assert(await page.locator('video').evaluate((v: HTMLVideoElement) => v.currentTime >= 24));
+  await page.locator('[aria-label="Close dialog"]').click();
+  await page.locator('dialog').waitFor({ state: 'detached' });
   assert.deepEqual(errors, [], 'No browser runtime errors');
   console.log(
-    'PASS: WebKit 15.4 production bundle at iPhone 8 size: RPC, graph, files, peers, sequential mode, rename dialog, repeated dialogs, inert isolation, touch targets, and theme',
+    'PASS: WebKit 15.4 production bundle at iPhone 8 size: RPC, graph, files, peers, sequential mode, rename dialog, repeated dialogs, inert isolation, touch targets, theme, and Video.js playback/resume',
   );
 } finally {
   await browser.close();
   server.stop(true);
+  mediaServer.stop(true);
 }

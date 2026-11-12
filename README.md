@@ -87,8 +87,19 @@ Transmission 4.x is the primary target, tested live with 4.1.3. The client uses 
 An optional native media-serving companion is documented in
 [integrations/openwrt/drift-stream/README.md](integrations/openwrt/drift-stream/README.md).
 It is built and packaged independently from the static frontend and has no frontend
-runtime dependencies. It provides HTTP video delivery for future player integration;
-the web player is not implemented yet.
+runtime dependencies. Use **Watch video…** in a torrent’s action menu, the inspector’s film button,
+or **Watch video** in a video file’s menu. Single videos open directly; multi-file
+torrents offer a chooser. The custom Video.js skin follows the app theme and
+supports seeking, speed, volume, fullscreen, available PiP/AirPlay, and native text
+tracks. Browser codec support determines which files play; there is no transcoding.
+
+Play enables sequential downloading through the companion. Progress is remembered
+locally per server, torrent and file, with Resume / Start over on reopening. Storage
+failures fall back to the current tab’s memory. The companion uses the RPC hostname
+and adjacent port (9091 → 9092); direct HTTP connections are supported. Build and
+install the current companion as well as the frontend for authenticated playback.
+Passwords stay out of media URLs; file-scoped playback tickets expire after twelve
+hours. The player engine and conditional stylesheet polyfill load only when watching.
 
 ## Activity history
 
@@ -134,7 +145,7 @@ The helper derives the bind address from UCI; DRIFT_RPC_URL can override the end
 
 Flat surfaces, a restrained hierarchy, contextual controls, and explicit state. Readable typography with a 12px minimum for annotations, keyed FLIP movement, stable inspector exits, and short overlay motion. No decorative gradients or private design-library dependencies.
 
-MIT. Inter: SIL Open Font License. Lucide and D3: ISC. LayerChart: MIT. The inert polyfill: W3C Software License. Third-party notices are included in public/licenses and the compiled bundle.
+MIT. Inter: SIL Open Font License. Lucide and D3: ISC. LayerChart: MIT. Video.js and its support packages: Apache-2.0/MIT. Constructable stylesheet polyfill: MIT. The inert polyfill: W3C Software License. Player dependency notices are in public/licenses/Video-player.txt. Third-party notices are included in public/licenses and the compiled bundle.
 
 An opt-in live smoke check is available after deployment:
 

@@ -10,6 +10,7 @@
     File,
     Folder,
     FolderOpen,
+    Film,
     MoreHorizontal,
     Pencil,
     Check,
@@ -30,6 +31,7 @@
   } from '@lucide/svelte';
   import { fly } from 'svelte/transition';
   import { client } from '../lib/client.svelte';
+  import { videoPattern } from '../lib/playback';
   import { bytes, date, duration, percent, speed } from '../lib/format';
   import { stage } from '../lib/stage';
   import { transferControl } from '../lib/transfer-control';
@@ -42,7 +44,13 @@
     torrent: t,
     close,
     mobile = false,
-  }: { torrent: Torrent; close: () => void; mobile?: boolean } = $props();
+    watch,
+  }: {
+    torrent: Torrent;
+    close: () => void;
+    mobile?: boolean;
+    watch: (torrent: Torrent, index?: number) => void;
+  } = $props();
   function panelIn(node: HTMLElement) {
     delete node.dataset.closing;
     for (const key of ['position', 'width', 'height', 'top', 'right', 'bottom', 'left', 'z-index'])
@@ -370,6 +378,12 @@
     <div class="flex items-center gap-1">
       {#if tab === 'Options' && optionsPending}<span class="option-save-state" role="status"
           >Saving…</span
+        >{/if}
+      {#if t.metadataPercentComplete >= 1 && (!t.files || t.files.some( (f) => videoPattern.test(f.name) ))}<button
+          class="icon-button"
+          aria-label="Watch video"
+          title="Watch video"
+          onclick={() => watch(t)}><Film size={18} /></button
         >{/if}
       {#if !mobile}<button class="icon-button" aria-label="Close inspector" onclick={close}
           ><X size={17} /></button
@@ -1028,6 +1042,15 @@
       }
     }}
   >
+    {#if !fileContext.node.children.length && videoPattern.test(fileContext.node.path)}<button
+        role="menuitem"
+        onclick={() => {
+          const index = fileContext!.node.ids[0];
+          closeFileMenu();
+          watch(t, index);
+        }}><Film size={16} />Watch video</button
+      >
+      <hr />{/if}
     <PriorityControl
       value={priority(fileContext.node)}
       onchange={(value) => {

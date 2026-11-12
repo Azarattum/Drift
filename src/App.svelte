@@ -24,6 +24,7 @@
     Download,
     ExternalLink,
     Folder,
+    Film,
     Gauge,
     HardDrive,
     Info,
@@ -57,7 +58,13 @@
   import Inspector from './components/Inspector.svelte';
   import Modal from './components/Modal.svelte';
   import RenameTorrent from './components/RenameTorrent.svelte';
+  import VideoPlayer from './components/VideoPlayer.svelte';
 
+  let watching = $state<{ torrent: Torrent; fileIndex?: number } | null>(null);
+  function watchTorrent(torrent: Torrent, fileIndex?: number) {
+    context = null;
+    watching = { torrent, fileIndex };
+  }
   let dragging = $state(false);
   let modal = $state<null | 'add' | 'remove' | 'move' | 'rename' | 'settings'>(null);
   let settingsTab = $state('Connection');
@@ -308,6 +315,7 @@
     }
   }
   function keyboard(e: KeyboardEvent) {
+    if (watching) return;
     const target = e.target as HTMLElement;
     const inLibrary =
       !!target?.closest('.torrent-list') ||
@@ -684,6 +692,7 @@
   </main>
   {#if client.selected.length === 1 && client.focused && (!mobile || mobileSection === 'transfers')}<Inspector
       {mobile}
+      watch={(torrent, index) => watchTorrent(torrent, index)}
       torrent={client.details?.id === client.focused.id
         ? { ...client.details, ...client.focused }
         : client.focused}
@@ -822,6 +831,10 @@
         ><Zap size={15} />{client.isFullSpeed(context.t)
           ? 'Turn off Full speed'
           : 'Full speed'}{#if client.isFullSpeed(context.t)}<Check size={13} />{/if}</button
+      >{/if}
+    {#if actionTorrents.length === 1 && context.t.metadataPercentComplete >= 1}<button
+        role="menuitem"
+        onclick={() => watchTorrent(context!.t)}><Film size={15} />Watch video…</button
       >{/if}
     <hr />
     <button
@@ -1044,3 +1057,9 @@
         onfocus={(e) => e.currentTarget.select()}></textarea>
     </div>
   </Modal>{/if}
+
+{#if watching}<VideoPlayer
+    torrent={watching.torrent}
+    fileIndex={watching.fileIndex}
+    close={() => (watching = null)}
+  />{/if}

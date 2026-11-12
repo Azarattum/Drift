@@ -9,11 +9,13 @@
     close,
     children,
     wide = false,
+    player = false,
   }: {
     title: string;
     close: () => void;
     children: Snippet;
     wide?: boolean;
+    player?: boolean;
   } = $props();
   let dialog: HTMLDialogElement;
   let prior: HTMLElement | null = null;
@@ -53,6 +55,7 @@
 <dialog
   bind:this={dialog!}
   class:wide
+  class:player-dialog={player}
   aria-labelledby={titleId}
   in:enter|global
   out:exit|global

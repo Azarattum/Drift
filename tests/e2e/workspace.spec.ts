@@ -1284,7 +1284,7 @@ test('transfer options auto-save only valid changed fields and survive navigatio
   await page.getByTestId('torrent-row').nth(2).click();
   await page.getByRole('tab', { name: 'Options', exact: true }).click();
   await page
-    .getByRole('group', { name: 'Download priority', exact: true })
+    .getByRole('group', { name: 'Bandwidth priority', exact: true })
     .getByRole('button', { name: 'High', exact: true })
     .click();
   await expect
