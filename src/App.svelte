@@ -873,7 +873,7 @@
     ><button role="menuitem" onclick={() => copy('hashString')}
       ><Copy size={15} />Copy info hash</button
     >
-    {#if actionTorrents.length && actionTorrents.every((t) => t.percentDone < 1)}
+    {#if client.torrents.filter((t) => t.percentDone < 1).length > 1 && actionTorrents.length && actionTorrents.every((t) => t.percentDone < 1)}
       <hr />
       <QueueControl torrents={actionTorrents} move={(method) => run(method)} />
     {/if}

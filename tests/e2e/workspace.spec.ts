@@ -1590,12 +1590,11 @@ test('retry failed trackers with VPN is conditional and preserves labels', async
   await expect(retry).toHaveCount(0, { timeout: 10000 });
 });
 
-test('download queue rank excludes completed torrents', async ({ page }) => {
+test('download queue is hidden with only one unfinished torrent', async ({ page }) => {
   const { torrents } = await server(page);
   torrents[0].queuePosition = 5;
   for (const torrent of torrents.slice(1)) torrent.percentDone = 1;
   await page.getByTestId('torrent-row').first().click({ button: 'right' });
   const queue = page.getByRole('group', { name: 'Download queue', exact: true });
-  await expect(queue.locator('b')).toHaveText('#1');
-  for (const button of await queue.getByRole('button').all()) await expect(button).toBeDisabled();
+  await expect(queue).toHaveCount(0);
 });
