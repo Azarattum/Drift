@@ -693,10 +693,9 @@ input[role='switch']:checked::after {
   opacity: 0.65;
 }
 .speed-chart .lc-highlight-point {
-  --stroke-color: var(--strong-border);
-}
-:root[data-theme='dark'] .speed-chart .lc-highlight-point {
-  --stroke-color: var(--muted);
+  --stroke-color: none;
+  stroke-width: 0;
+  r: 4.5px;
 }
 .lc-tooltip-container {
   font-size: 13px;
