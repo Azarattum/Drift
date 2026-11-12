@@ -399,7 +399,12 @@
         : `${bytes(t.sizeWhenDone)} · ${t.files?.length || t.fileCount || 'Loading'} ${t.files || t.fileCount ? ((t.files?.length || t.fileCount) === 1 ? 'file' : 'files') : 'details…'}`}</span
     >
   </div>
-  <div class="inspector-tabs" role="tablist" aria-label="Torrent details">
+  <div
+    class="inspector-tabs"
+    role="tablist"
+    aria-label="Torrent details"
+    style={`--tab-index:${tabs.indexOf(tab)}`}
+  >
     {#each tabs as name}<button
         role="tab"
         id={`${tabsId}-${name}`}

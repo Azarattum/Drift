@@ -1068,6 +1068,8 @@ input[role='switch']:checked::after {
   line-height: 1.5;
 }
 .inspector-tabs {
+  --tab-inset: 12px;
+  position: relative;
   display: flex;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
@@ -1086,15 +1088,28 @@ input[role='switch']:checked::after {
   color: var(--text);
   font-weight: 550;
 }
-.inspector-tabs button.active::after {
+.inspector-tabs::after {
   content: '';
   position: absolute;
-  left: 12px;
-  right: 12px;
+  left: var(--tab-inset);
   bottom: 0;
   height: 2px;
-  background: var(--text);
-  border-radius: 2px;
+  width: calc((100% - var(--tab-inset) * 2) / 5);
+  background: linear-gradient(
+    to right,
+    transparent 12px,
+    var(--text) 12px,
+    var(--text) calc(100% - 12px),
+    transparent calc(100% - 12px)
+  );
+  transform: translateX(calc(var(--tab-index) * 100%));
+  transition: transform 180ms ease;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .inspector-tabs::after {
+    transition: none;
+  }
 }
 .inspector-tabs small {
   font-size: 12px;
@@ -2681,6 +2696,7 @@ summary {
     font-size: 16px;
   }
   .inspector-tabs {
+    --tab-inset: 8px;
     padding-inline: 8px;
   }
   .inspector-tabs button {
