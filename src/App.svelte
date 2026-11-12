@@ -834,7 +834,7 @@
       >{/if}
     {#if actionTorrents.length === 1 && context.t.metadataPercentComplete >= 1}<button
         role="menuitem"
-        onclick={() => watchTorrent(context!.t)}><Film size={15} />Watch video…</button
+        onclick={() => watchTorrent(context!.t)}><Film size={15} />Watch video</button
       >{/if}
     <hr />
     <button
