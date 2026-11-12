@@ -3348,7 +3348,6 @@ input[type='number']::-webkit-outer-spin-button {
   margin: 10px 0 16px;
 }
 .labels-action {
-  padding-left: 0;
   color: var(--blue);
 }
 .peer-row .download small,
