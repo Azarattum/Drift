@@ -1,0 +1,6 @@
+# Count sustained non-discovery UDP traffic for calls and multiplayer games.
+counter transmission_yield_interactive {}
+chain transmission_yield_interactive_forward {
+    type filter hook forward priority 11; policy accept;
+    meta l4proto udp udp dport != { 53, 67, 68, 123, 1900, 5353 } udp sport != { 53, 67, 68, 123, 1900, 5353 } counter name transmission_yield_interactive
+}

@@ -4,10 +4,11 @@
 config_load transmission_yield
 config_get interval main interval 2
 config_get hold main idle_seconds 20
-config_get threshold main traffic_bytes_per_second 2048
+config_get threshold main traffic_bytes_per_second 8192
+config_get udp_threshold main interactive_packets_per_second 20
 config_get down main busy_download_kbytes 128
 config_get up main busy_upload_kbytes 32
-config_get minmem main minimum_available_kbytes 24576
+config_get minmem main minimum_available_kbytes 16384
 config_get maxcpu main maximum_cpu_percent 70
 config_get rpc main rpc '127.0.0.1:9091'
 
@@ -20,6 +21,9 @@ read_cpu() {
 read_traffic() {
     bytes=$(nft list counter inet fw4 transmission_yield_traffic 2>/dev/null |
         awk '/packets/ {print $4}')
+    packets=$(nft list counter inet fw4 transmission_yield_interactive 2>/dev/null |
+        awk '/packets/ {print $2}')
+    case "$packets" in ''|*[!0-9]*) return 1;; esac
     case "$bytes" in ''|*[!0-9]*) return 1;; esac
 }
 
@@ -31,8 +35,8 @@ apply_mode() {
     fi
     [ "$mode" = "$1" ] || logger -t transmission-yield "$1: $reason"
     mode=$1
-    printf 'mode=%s\nreason=%s\nother_bytes_per_second=%s\ncpu_percent=%s\navailable_kbytes=%s\n' \
-        "$mode" "$reason" "${rate:-0}" "${cpu:-0}" "${available:-0}" > /var/run/transmission-yield.status
+    printf 'mode=%s\nreason=%s\nother_bytes_per_second=%s\ncpu_percent=%s\navailable_kbytes=%s\ninteractive_packets_per_second=%s\n' \
+        "$mode" "$reason" "${rate:-0}" "${cpu:-0}" "${available:-0}" "${packet_rate:-0}" > /var/run/transmission-yield.status
 }
 
 # Leave conservative limits in place if this service is stopped.
@@ -42,11 +46,13 @@ reason='starting; waiting for idle network'
 idle_time=0
 ticks=0
 priority_error=0
+traffic_streak=0
 read_cpu
 previous_total=$total
 previous_quiet=$quiet
 read_traffic || bytes=0
 previous_bytes=$bytes
+previous_packets=${packets:-0}
 apply_mode busy
 
 while :; do
@@ -75,15 +81,23 @@ while :; do
     reason='network idle; resource headroom available'
     busy=0
     rate=0
+    packet_rate=0
     if read_traffic; then
         delta=$((bytes - previous_bytes))
+        packet_delta=$((${packets:-0} - previous_packets))
+        previous_packets=${packets:-0}
         previous_bytes=$bytes
         # Firewall reload resets counters; wait for a fresh sample.
-        if [ "$delta" -lt 0 ]; then
+        if [ "$delta" -lt 0 ] || [ "$packet_delta" -lt 0 ]; then
             busy=1
             reason='traffic counters reset'
         else
             rate=$((delta / interval))
+            packet_rate=$((packet_delta / interval))
+            if [ "$packet_rate" -ge "$udp_threshold" ]; then
+                busy=1
+                reason='interactive UDP traffic active'
+            fi
             if [ "$rate" -ge "$threshold" ]; then
                 busy=1
                 reason='other network traffic active'
@@ -92,6 +106,13 @@ while :; do
     else
         busy=1
         reason='traffic monitor unavailable'
+    fi
+    # Ignore isolated background bursts; sustained traffic yields within six seconds.
+    if [ "$busy" = 1 ] && { [ "$reason" = "interactive UDP traffic active" ] || [ "$reason" = "other network traffic active" ]; }; then
+        traffic_streak=$((traffic_streak + 1))
+        [ "$traffic_streak" -ge 3 ] || busy=0
+    else
+        traffic_streak=0
     fi
     if [ "$cpu" -ge "$maxcpu" ]; then
         busy=1
@@ -120,7 +141,7 @@ while :; do
         apply_mode "$desired" || mode=unknown
         ticks=0
     else
-        printf 'mode=%s\nreason=%s\nother_bytes_per_second=%s\ncpu_percent=%s\navailable_kbytes=%s\n' \
-            "$mode" "$reason" "$rate" "$cpu" "$available" > /var/run/transmission-yield.status
+        printf 'mode=%s\nreason=%s\nother_bytes_per_second=%s\ncpu_percent=%s\navailable_kbytes=%s\ninteractive_packets_per_second=%s\n' \
+            "$mode" "$reason" "$rate" "$cpu" "$available" "${packet_rate:-0}" > /var/run/transmission-yield.status
     fi
 done
