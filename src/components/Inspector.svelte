@@ -91,10 +91,21 @@
       if (!menu || fileContext?.node.path !== n.path) return;
       if (!mobile) {
         const bounds = menu.getBoundingClientRect();
+        let x = fileContext.x,
+          y = fileContext.y;
+        if (fileMenuTrigger?.classList.contains('file-actions')) {
+          x = rect.right - bounds.width;
+          const below = innerHeight - rect.bottom - 18;
+          const above = rect.top - 18;
+          if (bounds.height > Math.max(below, above)) {
+            x = rect.left - bounds.width - 6;
+            y = rect.top;
+          } else y = bounds.height <= below ? rect.bottom + 6 : rect.top - bounds.height - 6;
+        }
         fileContext = {
           ...fileContext,
-          x: Math.max(12, Math.min(fileContext.x, innerWidth - bounds.width - 12)),
-          y: Math.max(12, Math.min(fileContext.y, innerHeight - bounds.height - 12)),
+          x: Math.max(12, Math.min(x, innerWidth - bounds.width - 12)),
+          y: Math.max(12, Math.min(y, innerHeight - bounds.height - 12)),
         };
       }
       menu.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
@@ -598,6 +609,8 @@
               >
               <button
                 class="icon-button file-actions"
+                aria-haspopup="menu"
+                aria-expanded={fileContext?.node.path === n.path}
                 tabindex={fileFocus === n.path ? 0 : -1}
                 aria-label={`Actions for ${n.path}`}
                 onclick={(e) => openFileMenu(e, n)}><MoreHorizontal size={17} /></button

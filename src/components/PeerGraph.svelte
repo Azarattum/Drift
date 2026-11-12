@@ -17,7 +17,7 @@
 </script>
 
 <div class="peer-map" class:compact class:empty={!peers.length}>
-  {#if peers.length}<p class="peer-encoding">Closer = faster · Size = downloaded (2 min)</p>{/if}
+  {#if peers.length}<p class="peer-encoding">Closer = faster · Size = downloaded (1 min)</p>{/if}
   <div class="peer-visualization">
     {#if !peers.length}<div class="panel-empty">
         <Network size={26} /><b>No peer connections yet</b><span
@@ -26,7 +26,7 @@
       </div>{:else}<svg
         viewBox={`0 0 320 ${compact ? 192 : 264}`}
         role="group"
-        aria-label={`${peers.length} connected peers. Faster connections are closer to the center. Larger circles have downloaded more in the last two minutes. Blue is download, teal is upload.`}
+        aria-label={`${peers.length} connected peers. Faster connections are closer to the center. Larger circles have downloaded more in the last minute. Blue is download, teal is upload.`}
       >
         <circle cx="160" cy={center} r={compact ? 70 : 105} class="orbit" /><circle
           cx="160"
@@ -73,7 +73,7 @@
           >
             <title
               >{p.address} · ↓ {speed(p.rateToClient)} · ↑ {speed(p.rateToPeer)} · {pos.hasVolume
-                ? `${bytes(p.bytes_to_client!)} downloaded in the last 2 min`
+                ? `${bytes(p.bytes_to_client!)} downloaded in the last minute`
                 : 'Download volume unavailable'}</title
             ><circle
               class="peer-target"
@@ -137,7 +137,7 @@
             class="upload"><ArrowUp size={12} />{speed(selected.rateToPeer)}</span
           >
         </div>
-        <dl class="peer-volumes" aria-label="Data transferred in the last two minutes">
+        <dl class="peer-volumes" aria-label="Data transferred in the last minute">
           <div>
             <dt>Downloaded</dt>
             <dd>
@@ -151,7 +151,7 @@
             </dd>
           </div>
         </dl>
-        <small class="peer-volume-period">Last 2 minutes</small>
+        <small class="peer-volume-period">Last minute</small>
       </div>{/if}{#if !selected}<p class="peer-selection-hint">Select a connection</p>{/if}
   </div>
   {#if peers.length}<div class="peer-legend">

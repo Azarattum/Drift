@@ -1368,12 +1368,20 @@ test('file menus stay inside screen edges and transfer hover states change toget
   );
   await row.click();
   await page.getByRole('tab', { name: 'Files', exact: true }).click();
-  await page.getByRole('treeitem').last().locator('.file-actions').click();
+  const trigger = page.getByRole('treeitem').last().locator('.file-actions');
+  const triggerBounds = (await trigger.boundingBox())!;
+  await trigger.click();
   const menu = page.getByRole('menu', { name: 'File actions', exact: true });
   const bounds = (await menu.boundingBox())!;
   expect(bounds.x).toBeGreaterThanOrEqual(12);
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(1428);
   expect(bounds.y + bounds.height).toBeLessThanOrEqual(948);
+  expect(
+    bounds.y >= triggerBounds.y + triggerBounds.height + 5 ||
+      bounds.y + bounds.height <= triggerBounds.y - 5 ||
+      bounds.x + bounds.width <= triggerBounds.x - 5,
+  ).toBe(true);
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
   await page.keyboard.press('Escape');
   await page.setViewportSize({ width: 320, height: 568 });
   await page.getByRole('treeitem').last().locator('.file-actions').click();
