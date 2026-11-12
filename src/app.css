@@ -4310,3 +4310,7 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
 .watch-volume[data-hidden] {
   display: none;
 }
+
+.file-context-menu > .priority-control {
+  margin-bottom: 8px;
+}
