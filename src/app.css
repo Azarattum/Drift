@@ -3497,3 +3497,26 @@ input[type='number']::-webkit-outer-spin-button {
     min-height: 44px;
   }
 }
+
+.selection-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 4px 16px 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--soft);
+  flex-shrink: 0;
+}
+.selection-toolbar .selection-count {
+  margin-right: auto;
+}
+.selection-joined-above .torrent-row.selected {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+.selection-joined-below .torrent-row.selected {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}

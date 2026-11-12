@@ -596,19 +596,6 @@
           />
         </div>{/if}
       <div class="list-toolbar">
-        {#if client.selected.length > 1}<span class="selection-count"
-            >{client.selected.length} selected</span
-          ><button
-            class="text-button"
-            onclick={() => run(anyRunning ? 'torrent-stop' : 'torrent-start')}
-            >{#if allComplete && anyRunning}<Square size={13} fill="currentColor" />Stop seeding{:else if allComplete}<Play
-                size={13}
-              />Start seeding{:else if anyRunning}<Pause size={13} />Pause{:else}<Play
-                size={13}
-              />Resume{/if}</button
-          ><button class="text-button danger" onclick={requestRemove}
-            ><Trash2 size={13} />Remove</button
-          ><button class="text-button" onclick={() => (client.selected = [])}>Clear</button>{/if}
         {#if mobile}<button
             class="mobile-filter"
             aria-label="Filter transfers"
@@ -623,8 +610,29 @@
           >{/if}
         {@render sortControl()}
       </div>
+      {#if client.selected.length > 1}
+        <div class="selection-toolbar" role="toolbar" aria-label="Selected transfers">
+          <span class="selection-count">{client.selected.length} selected</span><button
+            class="text-button"
+            onclick={() => run(anyRunning ? 'torrent-stop' : 'torrent-start')}
+            >{#if allComplete && anyRunning}<Square size={13} fill="currentColor" />Stop seeding{:else if allComplete}<Play
+                size={13}
+              />Start seeding{:else if anyRunning}<Pause size={13} />Pause{:else}<Play
+                size={13}
+              />Resume{/if}</button
+          ><button class="text-button danger" onclick={requestRemove}
+            ><Trash2 size={13} />Remove</button
+          ><button class="text-button" onclick={() => (client.selected = [])}>Clear</button>
+        </div>
+      {/if}
       <div class="torrent-list" role="listbox" aria-label="Transfers" aria-multiselectable="true">
-        {#each client.visible as t (t.id)}<div
+        {#each client.visible as t, index (t.id)}<div
+            class:selection-joined-above={client.selected.includes(t.id) &&
+              index > 0 &&
+              client.selected.includes(client.visible[index - 1].id)}
+            class:selection-joined-below={client.selected.includes(t.id) &&
+              index < client.visible.length - 1 &&
+              client.selected.includes(client.visible[index + 1].id)}
             data-row={t.id}
             animate:flip={{
               duration: motion(200),
