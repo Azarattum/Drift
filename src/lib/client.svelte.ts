@@ -83,6 +83,7 @@ export class Client {
   private lastSample = 0;
   private lastDetail = 0;
   private lastSession = 0;
+  private lastCapabilityProbe = 0;
   private noticeTimer?: ReturnType<typeof setTimeout>;
   fullSpeedAvailable = $derived(
     !!this.capabilities?.fullSpeed?.enabled &&
@@ -181,11 +182,22 @@ export class Client {
     }
   }
   async loadCapabilities() {
+    const now = Date.now();
+    if (now - this.lastCapabilityProbe < (this.capabilities ? 1500 : 30000)) return;
+    this.lastCapabilityProbe = now;
     try {
-      const url = new URL('full-speed.json', location.href);
+      const url = new URL('web/full-speed.json', new URL('.', this.rpc.endpoint));
       url.searchParams.set('t', String(Date.now()));
       const r = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(2000) });
-      this.capabilities = r.ok ? await r.json() : null;
+      const value = r.ok ? await r.json() : null;
+      this.capabilities =
+        value?.version === 1 &&
+        typeof value.fullSpeed?.enabled === 'boolean' &&
+        typeof value.fullSpeed?.label === 'string' &&
+        typeof value.fullSpeed?.heartbeat === 'number' &&
+        Array.isArray(value.fullSpeed?.active)
+          ? value
+          : null;
     } catch {
       this.capabilities = null;
     }
@@ -258,7 +270,7 @@ export class Client {
     );
   }
   fullSpeedApplied(t: Torrent) {
-    return this.capabilities?.fullSpeed.active.includes(t.hashString);
+    return this.fullSpeedAvailable && this.capabilities?.fullSpeed.active.includes(t.hashString);
   }
 }
 export const client = new Client();

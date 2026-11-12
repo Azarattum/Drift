@@ -116,7 +116,7 @@
   </div>
   <div class="row-actions">
     <button
-      class="icon-button"
+      class="icon-button row-toggle"
       disabled={!client.online || client.busy.has(t.id)}
       aria-label={`${t.status === 0 ? 'Resume' : 'Pause'} ${t.name}`}
       title={t.status === 0 ? 'Resume' : 'Pause'}
@@ -126,7 +126,7 @@
       }}
       >{#if t.status === 0}<Play size={15} />{:else}<Pause size={15} />{/if}</button
     >{#if client.fullSpeedAvailable && t.percentDone < 1}<button
-        class="icon-button"
+        class="icon-button row-boost"
         class:full
         aria-pressed={full}
         aria-label={`${full ? 'Disable' : 'Enable'} Full speed for ${t.name}`}
@@ -136,7 +136,7 @@
           void client.fullSpeed(t);
         }}><Zap size={15} /></button
       >{/if}<button
-      class="icon-button"
+      class="icon-button row-menu"
       aria-label={`Actions for ${t.name}`}
       onclick={(e) => {
         e.stopPropagation();

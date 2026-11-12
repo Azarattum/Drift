@@ -10,7 +10,8 @@
     BOTTOM = 112;
   let max = $derived(Math.max(1024, ...samples.flatMap((s) => [s.down, s.up])) * 1.15);
   let current = $derived(samples[hover ?? samples.length - 1]);
-  const x = (i: number) => 1 + (i / Math.max(1, samples.length - 1)) * 798;
+  const x = (i: number) =>
+    1 + ((samples[i].at - samples[0].at) / Math.max(1, samples.at(-1)!.at - samples[0].at)) * 798;
   const y = (n: number) => BOTTOM - (n / max) * (BOTTOM - TOP);
   function path(key: 'down' | 'up') {
     if (!samples.length) return '';
@@ -62,7 +63,7 @@
     aria-label="Inspect transfer speed history"
     aria-valuemin={0}
     aria-valuemax={Math.max(0, samples.length - 1)}
-    aria-valuenow={hover ?? samples.length - 1}
+    aria-valuenow={Math.max(0, hover ?? samples.length - 1)}
     aria-valuetext={`Download ${speed(current?.down)}, upload ${speed(current?.up)}`}
     tabindex="0"
     onkeydown={(e) => {

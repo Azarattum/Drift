@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { fade, fly, slide } from 'svelte/transition';
+  import { flip } from 'svelte/animate';
   import {
     Activity,
     ArrowDown,
@@ -271,6 +272,10 @@
       return;
     }
     if (editable || modal || e.defaultPrevented) return;
+    if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+      e.preventDefault();
+      openSettings();
+    }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
       e.preventDefault();
       queryInput?.focus();
@@ -422,8 +427,11 @@
               onclick={() => (client.query = '')}><X size={12} /></button
             >{:else}<kbd>⌘ F</kbd>{/if}
         </div>
-        <button class="button primary add-button" onclick={openAdd} disabled={!client.online}
-          ><Plus size={15} /><span>Add torrent</span></button
+        <button
+          class="button primary add-button"
+          aria-label="Add torrent"
+          onclick={openAdd}
+          disabled={!client.online}><Plus size={15} /><span>Add torrent</span></button
         >
       </div>
     </header>
@@ -490,7 +498,12 @@
       </div>
     </div>
     <div class="torrent-list" role="listbox" aria-label="Transfers" aria-multiselectable="true">
-      {#each client.visible as t (t.id)}<div data-row={t.id}>
+      {#each client.visible as t (t.id)}<div
+          data-row={t.id}
+          animate:flip={{
+            duration: matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200,
+          }}
+        >
           <TorrentRow
             torrent={t}
             selected={client.selected.includes(t.id)}
