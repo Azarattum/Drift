@@ -3784,7 +3784,10 @@ dialog.player-dialog {
   border-top: 1px solid var(--border);
 }
 .watch-controls-blocked {
-  visibility: hidden;
+  display: none;
+}
+.watch-resuming .watch-overlay {
+  inset: 0;
 }
 .watch-control-row {
   display: flex;
@@ -3933,14 +3936,19 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   appearance: none;
   -webkit-appearance: none;
   color: var(--secondary);
-  background: var(--soft);
+  background: transparent;
   height: 44px;
   min-width: 60px;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 8px;
   padding: 0 20px 0 9px;
   font-size: 12px;
   cursor: pointer;
+}
+.watch-rate select:hover,
+.watch-rate select:focus-visible {
+  background: var(--hover);
+  color: var(--text);
 }
 .watch-rate option {
   background: var(--surface);
@@ -3961,7 +3969,7 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   place-items: center;
   width: 64px;
   height: 64px;
-  padding-left: 5px;
+  padding: 0;
   border: 1px solid var(--strong-border);
   border-radius: 12px;
   background: rgba(var(--surface-rgb), 0.94);
