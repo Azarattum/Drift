@@ -10,6 +10,11 @@ async function setup(
     unavailable?: boolean;
     invalidMedia?: boolean;
     partial?: boolean;
+    subtitles?: boolean;
+    subtitlePending?: boolean;
+    mediaUnavailable?: boolean;
+    priorityGate?: boolean;
+    priorityWaiting?: boolean;
   } = {},
 ) {
   const t = torrent({
@@ -33,10 +38,20 @@ async function setup(
         : []),
     ],
   });
+  const subtitleIndex = t.files!.length;
+  if (options.subtitles)
+    t.files!.push({ name: 'Northern Light/01 - The coast.en.srt', length: 80, bytesCompleted: 80 });
+  let subtitleAttempts = 0;
+  let releaseMedia!: () => void;
+  const mediaGate = new Promise<void>((resolve) => {
+    releaseMedia = resolve;
+  });
+  const rpcCalls: { method: string; arguments: { fields?: string[] } }[] = [];
   const calls: { url: string; method: string; headers: Record<string, string> }[] = [];
   await page.route('**/full-speed.json*', (route) => route.fulfill({ status: 404 }));
   await page.route(/\/rpc$/, async (route) => {
     const body = route.request().postDataJSON();
+    rpcCalls.push(body);
     let args = {};
     if (body.method === 'session-get') args = { 'rpc-version': 18, version: '4.1.3' };
     if (body.method === 'torrent-get') args = { torrents: [t] };
@@ -65,6 +80,19 @@ async function setup(
           src: `${path.replace('/play/', '/media/')}?ticket=${'t'.repeat(43)}`,
           type: 'video/mp4',
           length: media.length,
+          ...(options.priorityGate || options.priorityWaiting
+            ? { priority: `${path.replace('/play/', '/priority/')}?ticket=${'t'.repeat(43)}` }
+            : {}),
+          subtitles: options.subtitles
+            ? [
+                {
+                  index: subtitleIndex,
+                  label: 'en',
+                  language: 'en',
+                  src: `${path.replace('/play/', '/subtitles/')}/${subtitleIndex}?ticket=${'t'.repeat(43)}`,
+                },
+              ]
+            : [],
         },
         headers: {
           ...headers,
@@ -73,6 +101,21 @@ async function setup(
       });
     if (new URL(route.request().url()).searchParams.get('ticket') !== 't'.repeat(43))
       return route.fulfill({ status: 401, headers });
+    if (path.includes('/priority/')) {
+      releaseMedia();
+      return route.fulfill({ json: { pending: true, firstPieceReady: false }, headers });
+    }
+    if (path.includes('/subtitles/')) {
+      subtitleAttempts++;
+      if (options.subtitlePending && subtitleAttempts === 1)
+        return route.fulfill({ status: 409, headers });
+      return route.fulfill({
+        body: 'WEBVTT\n\n00:00:00.000 --> 00:00:50.000\nThe coast — English captions.\n\n',
+        headers: { ...headers, 'Content-Type': 'text/vtt; charset=utf-8' },
+      });
+    }
+    if (options.mediaUnavailable) return route.fulfill({ status: 503, headers });
+    if (options.priorityGate && route.request().method() === 'GET') await mediaGate;
     if (options.invalidMedia)
       return route.fulfill({
         body: Buffer.from('invalid video data'),
@@ -100,7 +143,7 @@ async function setup(
   await expect(page.locator('.torrent-row')).toHaveCount(1);
   await page.locator('.torrent-row').click();
   await page.getByRole('button', { name: 'Watch video', exact: true }).click();
-  return { t, calls };
+  return { t, calls, rpcCalls };
 }
 
 test('real playback, Video.js controls, resume, keyboard and close cleanup', async ({ page }) => {
@@ -200,6 +243,117 @@ test('real playback, Video.js controls, resume, keyboard and close cleanup', asy
   await page.keyboard.press('Escape');
   await expect(page.locator('.player-dialog')).toHaveCount(0);
   expect(calls.some((c) => c.method === 'POST' && c.headers['x-drift-stream'] === '1')).toBe(true);
+});
+
+test('startup missing data is explicitly prioritized before metadata or playback can start', async ({
+  page,
+}) => {
+  const { calls } = await setup(page, { priorityGate: true, partial: true });
+  await expect
+    .poll(() => calls.some((c) => c.method === 'POST' && c.url.includes('/v1/priority/')))
+    .toBe(true);
+  await expect
+    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeGreaterThan(0.2);
+});
+
+test('temporary startup HTTP failures are retried and never reported as unsupported codecs', async ({
+  page,
+}) => {
+  const { calls, rpcCalls } = await setup(page, { mediaUnavailable: true, partial: true });
+  await expect(page.getByRole('alert')).toContainText('Video data is temporarily unavailable');
+  await expect(page.getByRole('alert')).not.toContainText('format can’t play');
+  expect(calls.filter((c) => c.method === 'POST' && c.url.includes('/v1/play/'))).toHaveLength(3);
+  const monitorCalls = () =>
+    rpcCalls.filter(
+      (c) =>
+        c.method === 'torrent-get' &&
+        c.arguments.fields?.length === 2 &&
+        c.arguments.fields.includes('files'),
+    ).length;
+  const count = monitorCalls();
+  await page.waitForTimeout(3300);
+  expect(monitorCalls()).toBe(count);
+});
+
+test('matching subtitle files are discovered and rendered as native text tracks', async ({
+  page,
+}) => {
+  const { calls } = await setup(page, { subtitles: true });
+  await page.getByRole('button', { name: 'Subtitles', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'English', exact: true }).click();
+  await expect
+    .poll(() =>
+      page.locator('video').evaluate((v: HTMLVideoElement) => v.textTracks[0]?.cues?.length),
+    )
+    .toBe(1);
+  await expect
+    .poll(() =>
+      page
+        .locator('video')
+        .evaluate((v: HTMLVideoElement) => (v.textTracks[0]?.activeCues?.[0] as VTTCue)?.text),
+    )
+    .toBe('The coast — English captions.');
+  await page.screenshot({ path: 'test-results/player-subtitles.png' });
+  expect(calls.some((c) => c.url.includes('/v1/subtitles/') && c.method === 'GET')).toBe(true);
+  await page.getByRole('button', { name: 'Subtitles', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'Off', exact: true }).click();
+  await expect
+    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.textTracks[0]?.mode))
+    .toBe('disabled');
+});
+
+test('a selected subtitle waits for verified data and loads when it arrives', async ({ page }) => {
+  const { calls } = await setup(page, { subtitles: true, subtitlePending: true });
+  await page.getByRole('button', { name: 'Subtitles', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'English', exact: true }).click();
+  await expect(page.locator('.watch-subtitle-status')).toContainText(
+    'Waiting for subtitles to download',
+  );
+  await expect
+    .poll(() =>
+      page.locator('video').evaluate((v: HTMLVideoElement) => v.textTracks[0]?.cues?.length),
+    )
+    .toBe(1);
+  await expect(page.locator('.watch-subtitle-status')).toHaveCount(0);
+  expect(calls.filter((c) => c.url.includes('/v1/subtitles/') && c.method === 'GET')).toHaveLength(
+    2,
+  );
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  const count = calls.length;
+  await page.waitForTimeout(2200);
+  expect(calls.length).toBe(count);
+});
+
+test('closing while subtitles are missing cancels their retry', async ({ page }) => {
+  const { calls } = await setup(page, { subtitles: true, subtitlePending: true });
+  await page.getByRole('button', { name: 'Subtitles', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'English', exact: true }).click();
+  await expect(page.locator('.watch-subtitle-status')).toContainText('Waiting for subtitles');
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.waitForTimeout(2200);
+  expect(calls.filter((c) => c.url.includes('/v1/subtitles/') && c.method === 'GET')).toHaveLength(
+    1,
+  );
+});
+
+test('a confirmed missing-piece wait keeps the current stream instead of restarting it', async ({
+  page,
+}) => {
+  const { calls } = await setup(page, { priorityWaiting: true, partial: true });
+  const video = page.locator('video');
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState))
+    .toBeGreaterThanOrEqual(3);
+  await page.clock.install();
+  await video.evaluate((v: HTMLVideoElement) => {
+    Object.defineProperty(v, 'readyState', { configurable: true, value: 2 });
+    v.dispatchEvent(new Event('waiting'));
+  });
+  await expect(page.locator('.watch-buffering')).toHaveText('Waiting for download…');
+  await page.clock.fastForward(8500);
+  expect(calls.filter((c) => c.method === 'POST' && c.url.includes('/v1/play/'))).toHaveLength(1);
+  await page.getByRole('button', { name: 'Close dialog' }).click();
 });
 
 test('fullscreen fills the video area and overlays controls that hide and wake on activity', async ({

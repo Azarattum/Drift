@@ -105,9 +105,21 @@ const mediaServer = Bun.serve({
           src: path.replace('/play/', '/media/'),
           type: 'video/mp4',
           length: playerMedia.size,
+          subtitles: [
+            {
+              index: 1,
+              label: 'en',
+              language: 'en',
+              src: `${path.replace('/play/', '/subtitles/')}/1`,
+            },
+          ],
         },
         { headers },
       );
+    if (path.startsWith('/v1/subtitles/'))
+      return new Response('WEBVTT\n\n00:00:00.000 --> 00:01:00.000\nLegacy native captions\n\n', {
+        headers: { ...headers, 'Content-Type': 'text/vtt; charset=utf-8' },
+      });
     const range = request.headers.get('Range')?.match(/bytes=(\d+)-(\d*)/);
     const start = range ? Number(range[1]) : 0,
       end = range?.[2] ? Math.min(playerMedia.size - 1, Number(range[2])) : playerMedia.size - 1;
@@ -314,6 +326,7 @@ try {
       status: 0,
       files: [
         { name: 'Legacy video.mp4', length: playerMedia.size, bytesCompleted: playerMedia.size },
+        { name: 'Legacy video.en.srt', length: 80, bytesCompleted: 80 },
       ],
     }),
   );
@@ -331,6 +344,12 @@ try {
     v.currentTime = 25;
   });
   await page.waitForTimeout(200);
+  await page.locator('[aria-label="Subtitles"]').click();
+  await page.locator('[role="menuitemradio"]', { hasText: 'English' }).click();
+  await page.waitForFunction(() => {
+    const track = document.querySelector('video')?.textTracks[0];
+    return track?.mode === 'showing' && track.cues?.length === 1 && track.activeCues?.length === 1;
+  });
   await audit();
   await page.screenshot({ path: 'test-results/ios15.4-player.png' });
   await page.locator('[aria-label="Close dialog"]').click();

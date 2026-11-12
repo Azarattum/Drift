@@ -25,12 +25,14 @@ test('playback preparation accepts only the selected file on the companion origi
   const path = `/v1/media/${hash}/2`;
   const ticket = 't'.repeat(43);
   let src = `${path}?ticket=${ticket}`;
+  let tracks: unknown[] = [];
+  let priority: unknown;
   globalThis.fetch = (async (url, init) => {
     expect(String(url)).toBe(`http://router.local:9092/v1/play/${hash}/2`);
     expect(init?.method).toBe('POST');
     expect(init?.credentials).toBe('include');
     expect(new Headers(init?.headers).get('Authorization')).toBe('Basic fixture');
-    return Response.json({ version: 1, src });
+    return Response.json({ version: 1, src, subtitles: tracks, priority });
   }) as typeof fetch;
   const prepare = () =>
     prepareStream(
@@ -41,7 +43,35 @@ test('playback preparation accepts only the selected file on the companion origi
       new AbortController().signal,
     );
   try {
-    expect(await prepare()).toBe(`http://router.local:9092${src}`);
+    expect(await prepare()).toEqual({ src: `http://router.local:9092${src}`, subtitles: [] });
+    priority = `/v1/priority/${hash}/2?ticket=${ticket}`;
+    expect((await prepare()).priority).toBe(`http://router.local:9092${priority}`);
+    for (const invalid of [
+      'http://[',
+      'http://other.local/priority',
+      `/v1/priority/${hash}/3?ticket=${ticket}`,
+    ]) {
+      priority = invalid;
+      expect((await prepare()).priority).toBeUndefined();
+    }
+    tracks = [
+      { index: 4, label: 'en', language: 'en', src: `/v1/subtitles/${hash}/2/4?ticket=${ticket}` },
+      {
+        index: 5,
+        label: 'bad',
+        src: `http://other.local:9092/v1/subtitles/${hash}/2/5?ticket=${ticket}`,
+      },
+      { index: 6, label: 'bad', src: `/v1/subtitles/${hash}/3/6?ticket=${ticket}` },
+      { index: 7, label: 'bad', src: `/v1/subtitles/${hash}/2/7?ticket=${'x'.repeat(43)}` },
+    ];
+    expect((await prepare()).subtitles).toEqual([
+      {
+        index: 4,
+        label: 'en',
+        language: 'en',
+        src: `http://router.local:9092/v1/subtitles/${hash}/2/4?ticket=${ticket}`,
+      },
+    ]);
     for (const address of [
       `http://other.local:9092${path}`,
       `http://user:secret@router.local:9092${path}`,

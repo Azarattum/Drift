@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import {
     Airplay,
     Check,
@@ -28,11 +28,14 @@
     playbackPosition,
     positionKey,
     prepareStream,
+    prioritizeStream,
+    streamStatus,
     savePosition,
     videoFiles,
     type VideoFile,
   } from '../lib/playback';
   import { loadPlayerEngine } from '../lib/player-engine';
+  import { fetchSubtitle, subtitleLabel, type SubtitleSource } from '../lib/subtitles';
   let { torrent, fileIndex, close }: { torrent: Torrent; fileIndex?: number; close: () => void } =
     $props();
   const endpoint = client.rpc.endpoint;
@@ -41,6 +44,50 @@
   let phase = $state<'loading' | 'choose' | 'preparing' | 'ready' | 'error'>('loading');
   let message = $state('');
   let source = $state('');
+  let priorityURL = '';
+  let priorityTimer: ReturnType<typeof setTimeout>;
+  let priorityRequest: AbortController | null = null;
+  let waitingForPieces = $state(false);
+  let userPaused = false;
+  function authorization() {
+    return client.rpc.username
+      ? `Basic ${btoa(unescape(encodeURIComponent(`${client.rpc.username}:${client.rpc.password}`)))}`
+      : undefined;
+  }
+  function prioritizeSoon(delay = 100) {
+    clearTimeout(priorityTimer);
+    if (priorityURL && phase === 'ready')
+      priorityTimer = setTimeout(() => void prioritize(), delay);
+  }
+  async function prioritize() {
+    if (!priorityURL || !video || disposed || phase !== 'ready' || priorityRequest) return;
+    if ((video.readyState >= 3 && !video.seeking) || (resume !== null && video.readyState >= 1))
+      return;
+    const request = new AbortController();
+    priorityRequest = request;
+    const url = priorityURL;
+    const timer = setTimeout(() => request.abort(), 3000);
+    try {
+      const result = await prioritizeStream(url, authorization(), request.signal);
+      if (!request.signal.aborted && priorityURL === url)
+        waitingForPieces = result?.pending ?? false;
+    } catch {
+      /* The streaming connection and bounded recovery own user-facing errors. */
+    } finally {
+      clearTimeout(timer);
+      if (priorityRequest === request) priorityRequest = null;
+      if (
+        !disposed &&
+        phase === 'ready' &&
+        priorityURL === url &&
+        video &&
+        video.readyState < 3 &&
+        !(userPaused && video.readyState >= 1 && !video.seeking) &&
+        !(resume !== null && video.readyState >= 1)
+      )
+        prioritizeSoon(1500);
+    }
+  }
   let video = $state<HTMLVideoElement>();
   let canvas = $state<HTMLElement>();
   let fullscreen = $state(false);
@@ -68,32 +115,58 @@
   let stallTimer: ReturnType<typeof setTimeout>;
   let reconnects = 0;
   let lastReconnect = -1;
+  let lastRecoveryBytes = -1;
+  function recover(at: number, reason: string, resumePlayback = true) {
+    if (!selected) return;
+    if (at > lastReconnect + 1 || downloaded > lastRecoveryBytes) reconnects = 0;
+    lastReconnect = at;
+    lastRecoveryBytes = downloaded;
+    if (++reconnects > 2) {
+      phase = 'error';
+      message = reason;
+      stop();
+      controller.abort();
+      return;
+    }
+    void watch(selected, resumePlayback ? at : undefined, true);
+  }
   function buffering() {
+    prioritizeSoon();
     clearTimeout(bufferTimer);
     bufferTimer = setTimeout(() => {
       waiting = !!video && video.readyState < 3;
     }, 350);
     clearTimeout(stallTimer);
     stallTimer = setTimeout(() => {
-      if (!video || !selected || video.paused || video.readyState >= 3 || phase !== 'ready') return;
-      const at = pendingSeek ?? video.currentTime;
-      if (at > lastReconnect + 1) reconnects = 0;
-      lastReconnect = at;
-      if (++reconnects > 2) {
-        stop();
-        controller.abort();
-        phase = 'error';
-        message =
-          'The stream is not making progress. Your position is saved. Wait for more video data or check the connection, then try again.';
+      if (
+        !video ||
+        !selected ||
+        userPaused ||
+        resume !== null ||
+        video.readyState >= 3 ||
+        phase !== 'ready'
+      )
+        return;
+      if (waitingForPieces) {
+        // A live request waiting on verified pieces needs download time, not a restart.
+        buffering();
         return;
       }
-      void watch(selected, at);
+      const at = pendingSeek ?? video.currentTime;
+      recover(
+        at,
+        'The stream is still waiting for video data. Your position is saved. Try again shortly.',
+      );
     }, 8000);
   }
   function buffered() {
     clearTimeout(bufferTimer);
     clearTimeout(stallTimer);
+    clearTimeout(priorityTimer);
+    priorityRequest?.abort();
+    priorityRequest = null;
     waiting = false;
+    waitingForPieces = false;
   }
   let resume = $state<number | null>(null);
   let pendingSeek: number | null = null;
@@ -102,23 +175,97 @@
   let captions = $state<TextTrack[]>([]);
   let captionMenu = $state(false);
   let captionIndex = $state(-1);
+  let subtitleSources = $state<SubtitleSource[]>([]);
+  let subtitleURLs = $state<Record<number, string>>({});
+  let captionStatus = $state('');
+  let subtitleLoading = $state<number | null>(null);
+  let captionLoad: AbortController | null = null;
+  let captionRetry: ReturnType<typeof setTimeout>;
+  function cancelCaptionLoad() {
+    clearTimeout(captionRetry);
+    captionLoad?.abort();
+    captionLoad = null;
+    subtitleLoading = null;
+    captionStatus = '';
+  }
+  function clearSubtitles() {
+    cancelCaptionLoad();
+    for (const url of Object.values(subtitleURLs)) URL.revokeObjectURL(url);
+    subtitleURLs = {};
+    subtitleSources = [];
+  }
+  function externalSource(track?: TextTrack) {
+    const node = Array.from(
+      video?.querySelectorAll<HTMLTrackElement>('track[data-subtitle-index]') ?? [],
+    ).find((node) => node.track === track);
+    return node
+      ? subtitleSources.find((source) => source.index === Number(node.dataset.subtitleIndex))
+      : undefined;
+  }
+  function ensureSubtitle(track: TextTrack) {
+    const source = externalSource(track);
+    if (!source || subtitleURLs[source.index] || subtitleLoading === source.index) return;
+    cancelCaptionLoad();
+    const request = new AbortController();
+    captionLoad = request;
+    subtitleLoading = source.index;
+    const attempt = async () => {
+      if (request.signal.aborted || disposed) return;
+      if (document.hidden) {
+        captionRetry = setTimeout(attempt, 2000);
+        return;
+      }
+      try {
+        const result = await fetchSubtitle(source, request.signal);
+        if (request.signal.aborted || disposed) return;
+        if (typeof result === 'string') {
+          captionStatus =
+            result === 'downloading'
+              ? 'Waiting for subtitles to download…'
+              : 'Subtitle service is busy. Retrying…';
+          captionRetry = setTimeout(attempt, 2000);
+          return;
+        }
+        subtitleURLs = { ...subtitleURLs, [source.index]: URL.createObjectURL(result) };
+        subtitleLoading = null;
+        captionLoad = null;
+        captionStatus = '';
+      } catch {
+        if (!request.signal.aborted && !disposed) {
+          subtitleLoading = null;
+          captionLoad = null;
+          captionStatus = 'Subtitles could not be loaded. Choose the track again to retry.';
+        }
+      }
+    };
+    void attempt();
+  }
   $effect(() => {
     if (!video) return;
     const tracks = video.textTracks;
     const update = () => {
-      captions = Array.from(tracks).filter((t) => t.kind === 'subtitles' || t.kind === 'captions');
+      const available = Array.from(tracks).filter(
+        (t) => t.kind === 'subtitles' || t.kind === 'captions',
+      );
+      captions = available;
+      captionIndex = available.findIndex((t) => t.mode === 'showing');
+      if (captionIndex >= 0) ensureSubtitle(available[captionIndex]);
     };
-    update();
+    untrack(update);
     tracks.addEventListener('addtrack', update);
     tracks.addEventListener('removetrack', update);
+    tracks.addEventListener('change', update);
     return () => {
       tracks.removeEventListener('addtrack', update);
       tracks.removeEventListener('removetrack', update);
+      tracks.removeEventListener('change', update);
     };
   });
   function setCaption(index: number) {
+    cancelCaptionLoad();
     for (const [i, track] of captions.entries()) track.mode = i === index ? 'showing' : 'disabled';
     captionIndex = index;
+    if (index >= 0) ensureSubtitle(captions[index]);
     captionMenu = false;
     canvas?.querySelector<HTMLElement>('[aria-label="Subtitles"]')?.focus();
   }
@@ -186,6 +333,7 @@
     clearTimeout(monitorTimer);
     buffered();
     save(true);
+    clearSubtitles();
     if (video) {
       video.pause();
       video.removeAttribute('src');
@@ -197,10 +345,12 @@
     controller.abort();
     close();
   }
-  async function watch(file: VideoFile, reconnectAt?: number) {
-    if (reconnectAt === undefined) {
+  async function watch(file: VideoFile, reconnectAt?: number, recovery = false) {
+    const previousSubtitle = externalSource(captions[captionIndex])?.index;
+    if (reconnectAt === undefined && !recovery) {
       reconnects = 0;
       lastReconnect = -1;
+      lastRecoveryBytes = -1;
     }
     stop();
     controller.abort();
@@ -208,6 +358,8 @@
     const signal = controller.signal;
     selected = file;
     source = '';
+    priorityURL = '';
+    userPaused = false;
     phase = 'preparing';
     message = '';
     resume = null;
@@ -223,11 +375,8 @@
     captionMenu = false;
     captionIndex = -1;
     try {
-      const authorization = client.rpc.username
-        ? `Basic ${btoa(unescape(encodeURIComponent(`${client.rpc.username}:${client.rpc.password}`)))}`
-        : undefined;
-      const [url] = await Promise.all([
-        prepareStream(endpoint, torrent.hashString, file.index, authorization, signal),
+      const [stream] = await Promise.all([
+        prepareStream(endpoint, torrent.hashString, file.index, authorization(), signal),
         loadPlayerEngine(),
       ]);
       if (disposed || signal.aborted) return;
@@ -235,8 +384,24 @@
         reconnectAt === undefined
           ? (playbackPosition(positionKey(endpoint, torrent.hashString, file))?.time ?? null)
           : null;
-      source = url;
+      source = stream.src;
+      priorityURL = stream.priority ?? '';
+      subtitleSources = stream.subtitles;
       phase = 'ready';
+      await tick();
+      if (disposed || signal.aborted) return;
+      buffering();
+      if (previousSubtitle !== undefined) {
+        const track = video?.querySelector<HTMLTrackElement>(
+          `track[data-subtitle-index="${previousSubtitle}"]`,
+        );
+        if (track) {
+          captions = Array.from(video!.textTracks).filter(
+            (t) => t.kind === 'subtitles' || t.kind === 'captions',
+          );
+          setCaption(captions.indexOf(track.track));
+        }
+      }
       if (file.bytesCompleted < file.length) monitor(file, signal);
       void client.poll(true);
     } catch (e) {
@@ -247,6 +412,8 @@
   }
   async function play(at?: number) {
     if (!video) return;
+    const target = video;
+    userPaused = false;
     if (at !== undefined) {
       if (video.readyState >= 1 && Number.isFinite(video.duration))
         video.currentTime = Math.min(at, Math.max(0, video.duration - 0.1));
@@ -254,9 +421,12 @@
     }
     resume = null;
     try {
-      await video.play();
+      await target.play();
     } catch {
-      paused = true;
+      if (video === target) {
+        paused = true;
+        userPaused = true;
+      }
     }
   }
   function metadata() {
@@ -274,15 +444,45 @@
     if (resume !== null && (!Number.isFinite(duration) || resume >= duration - 10)) resume = null;
     if (resume === null) void play();
   }
-  function mediaError() {
-    if (!video?.error || !source) return;
-    save(true);
+  async function mediaError() {
+    if (!video?.error || !source || phase !== 'ready') return;
     const code = video.error.code;
-    message =
-      code === 3 || code === 4
-        ? 'This video format can’t play in this browser. Try a compatible browser or open the file in your preferred video app.'
-        : 'Playback was interrupted. Your position is saved. Check the connection or wait for more of the video to download, then try again.';
+    const at = pendingSeek ?? video.currentTime;
+    const resumePlayback = resume === null && !userPaused;
+    const missingPieces = waitingForPieces;
+    const url = source;
     phase = 'error';
+    message = 'Checking the stream connection…';
+    stop();
+    controller.abort();
+    controller = new AbortController();
+    const signal = controller.signal;
+    const status = await streamStatus(url, signal);
+    if (disposed || signal.aborted) return;
+    const terminal: Record<number, string> = {
+      401: 'Sign in to Transmission again to watch this video.',
+      403: 'This connection is not allowed to stream.',
+      404: 'This video is no longer available on your device.',
+      409: 'Transmission is checking this video. Try again when verification finishes.',
+      415: 'This file is not a recognized video container.',
+    };
+    if (terminal[status]) {
+      message = terminal[status];
+      return;
+    }
+    const ready = status === 200 || status === 206;
+    const reason =
+      ready && !missingPieces && (code === 3 || code === 4)
+        ? 'This video format can’t play in this browser. Try a compatible browser or open the file in your preferred video app.'
+        : 'Video data is temporarily unavailable. Your position is saved. Try again shortly.';
+    if (reconnects >= 2 && downloaded <= lastRecoveryBytes) {
+      message = reason;
+      return;
+    }
+    message = 'Reconnecting to the video…';
+    stallTimer = setTimeout(() => {
+      if (!disposed && !signal.aborted) recover(at, reason, resumePlayback);
+    }, 350);
   }
   function keys(e: KeyboardEvent) {
     if (phase === 'ready') keyboardControls = true;
@@ -473,16 +673,20 @@
           crossorigin="use-credentials"
           preload="auto"
           onloadedmetadata={metadata}
+          onplay={() => (userPaused = false)}
           ontimeupdate={() => {
             current = video?.currentTime || 0;
             save();
           }}
           onplaying={() => {
+            userPaused = false;
             paused = false;
             buffered();
             hasPlayed = true;
           }}
           onpause={() => {
+            if (phase === 'ready' && video && video.readyState >= 1 && !video.error)
+              userPaused = true;
             paused = true;
             buffered();
             save(true);
@@ -491,7 +695,8 @@
           onwaiting={buffering}
           onseeking={buffering}
           onseeked={() => {
-            buffered();
+            if (video && video.readyState >= 3) buffered();
+            else buffering();
             save(true);
           }}
           onvolumechange={() => (muted = !!video?.muted || video?.volume === 0)}
@@ -501,6 +706,26 @@
           }}
           onerror={mediaError}
         >
+          {#each subtitleSources as subtitle (subtitle.index)}
+            <track
+              kind="subtitles"
+              data-subtitle-index={subtitle.index}
+              src={subtitleURLs[subtitle.index]}
+              srclang={subtitle.language}
+              label={subtitleLabel(subtitle)}
+              onload={(e) => {
+                const track = (e.currentTarget as HTMLTrackElement).track;
+                track.mode = captions[captionIndex] === track ? 'showing' : 'disabled';
+              }}
+              onerror={(e) => {
+                if (
+                  subtitleURLs[subtitle.index] &&
+                  captions[captionIndex] === (e.currentTarget as HTMLTrackElement).track
+                )
+                  captionStatus = 'These subtitles could not be displayed. Choose another track.';
+              }}
+            />
+          {/each}
         </video>
         <media-gesture type="tap" pointer="mouse" action="togglePaused" disabled={resume !== null}
         ></media-gesture>
@@ -530,7 +755,11 @@
             role="status"
           >
             <LoaderCircle class="watch-spinner" size={25} /><span
-              >{duration <= 0 ? 'Loading video…' : 'Buffering…'}</span
+              >{waitingForPieces
+                ? 'Waiting for download…'
+                : duration <= 0
+                  ? 'Loading video…'
+                  : 'Buffering…'}</span
             >
           </div>{/if}
         <media-controls
@@ -592,6 +821,7 @@
                   <button
                     class="watch-control"
                     aria-label="Subtitles"
+                    aria-busy={subtitleLoading !== null}
                     aria-expanded={captionMenu}
                     aria-haspopup="menu"
                     onclick={toggleCaptions}><Captions size={20} /></button
@@ -661,6 +891,9 @@
           </media-controls-content>
         </media-controls>
         <media-status-announcer></media-status-announcer>
+        {#if captionStatus}<div class="watch-subtitle-status" role="status">
+            {captionStatus}
+          </div>{/if}
       </media-container>
     </video-player>
   {/if}

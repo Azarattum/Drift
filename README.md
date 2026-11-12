@@ -56,7 +56,7 @@ Safari 15.4 / iOS 15.4.1 is the minimum browser target.
 **Entirely optional. The normal client works without any of these.** They run on
 the Transmission host and are installed separately from `dist/`.
 
-- **[Watch videos](integrations/openwrt/drift-stream/README.md).** A small Rust companion streams complete or downloading files to the built-in player. Playback position is saved locally. Browser codec support applies; there is no transcoding.
+- **[Watch videos](integrations/openwrt/drift-stream/README.md).** A small Rust companion streams complete or downloading files to the built-in player, prioritizes missing ranges for playback and seeking, and discovers matching SRT/WebVTT subtitles. Playback position is saved locally. Browser codec support applies; there is no transcoding.
 - **[Router bandwidth control](integrations/openwrt/transmission-yield.md).** Let downloads yield to other network activity, with a Full speed override. The reference controller also records activity history.
 - **[Tracker VPN fallback](integrations/openwrt/transmission-trackers.md).** Retry failed IPv4 UDP trackers through an existing VPN and remember successful routes. Peer traffic keeps its normal route.
 

@@ -1,5 +1,7 @@
 import { preference, savePreference } from './preferences';
+import type { SubtitleSource } from './subtitles';
 import type { TorrentFile } from './types';
+export type PreparedStream = { src: string; subtitles: SubtitleSource[]; priority?: string };
 
 export const videoPattern = /\.(mp4|m4v|mov|mkv|webm|avi|ts|m2ts|mts)$/i;
 export type VideoFile = TorrentFile & { index: number };
@@ -86,7 +88,7 @@ export async function prepareStream(
   index: number,
   authorization: string | undefined,
   signal: AbortSignal,
-): Promise<string> {
+): Promise<PreparedStream> {
   if (!/^[a-f0-9]{40}$/i.test(hash) || !Number.isSafeInteger(index) || index < 0)
     throw new Error('Invalid video selection.');
   hash = hash.toLowerCase();
@@ -146,9 +148,107 @@ export async function prepareStream(
           !/^[A-Za-z0-9_-]{43}$/.test(ticket)))
     )
       throw new Error('The media service returned an invalid video address.');
-    return media.href;
+    const subtitles: SubtitleSource[] = [];
+    if (Array.isArray(data.subtitles)) {
+      for (const entry of data.subtitles.slice(0, 16)) {
+        if (
+          !entry ||
+          !Number.isSafeInteger(entry.index) ||
+          entry.index < 0 ||
+          typeof entry.label !== 'string' ||
+          !entry.label ||
+          entry.label.length > 120 ||
+          typeof entry.src !== 'string' ||
+          subtitles.some((t) => t.index === entry.index)
+        )
+          continue;
+        let url: URL;
+        try {
+          url = new URL(entry.src, base);
+        } catch {
+          continue;
+        }
+        if (
+          url.origin !== base.origin ||
+          url.username ||
+          url.password ||
+          url.hash ||
+          url.pathname !== `/v1/subtitles/${hash}/${index}/${entry.index}` ||
+          url.search !== media.search
+        )
+          continue;
+        const language =
+          typeof entry.language === 'string' &&
+          entry.language.length <= 35 &&
+          /^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(entry.language)
+            ? entry.language
+            : 'und';
+        subtitles.push({ index: entry.index, label: entry.label, language, src: url.href });
+      }
+    }
+    let priority: string | undefined;
+    if (typeof data.priority === 'string') {
+      try {
+        const url = new URL(data.priority, base);
+        if (
+          url.origin === base.origin &&
+          !url.username &&
+          !url.password &&
+          !url.hash &&
+          url.pathname === `/v1/priority/${hash}/${index}` &&
+          url.search === media.search &&
+          ticket
+        )
+          priority = url.href;
+      } catch {
+        // Optional capabilities must not prevent a valid media stream from playing.
+      }
+    }
+    return { src: media.href, subtitles, ...(priority ? { priority } : {}) };
   } finally {
     clearTimeout(timer);
+    signal.removeEventListener('abort', abort);
+  }
+}
+
+export async function prioritizeStream(
+  url: string,
+  authorization: string | undefined,
+  signal: AbortSignal,
+): Promise<{ pending: boolean; firstPieceReady: boolean } | null> {
+  const response = await fetch(url, {
+    method: 'POST',
+    credentials: 'include',
+    signal,
+    headers: { 'X-Drift-Stream': '1', ...(authorization ? { Authorization: authorization } : {}) },
+  });
+  if (!response.ok) return null;
+  const data = await response.json();
+  return typeof data.pending === 'boolean' && typeof data.firstPieceReady === 'boolean'
+    ? { pending: data.pending, firstPieceReady: data.firstPieceReady }
+    : null;
+}
+
+/** Native media error codes conflate transport failures with unsupported codecs. */
+export async function streamStatus(url: string, signal: AbortSignal): Promise<number> {
+  const request = new AbortController();
+  const abort = () => request.abort();
+  signal.addEventListener('abort', abort, { once: true });
+  if (signal.aborted) request.abort();
+  const timer = setTimeout(abort, 5000);
+  try {
+    const response = await fetch(url, {
+      method: 'HEAD',
+      headers: { Range: 'bytes=0-1' },
+      credentials: 'include',
+      signal: request.signal,
+    });
+    return response.status;
+  } catch {
+    return 0;
+  } finally {
+    clearTimeout(timer);
+    request.abort();
     signal.removeEventListener('abort', abort);
   }
 }
