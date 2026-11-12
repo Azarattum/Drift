@@ -92,7 +92,14 @@
             : t.metadataPercentComplete < 1
               ? 'Retrieving file list'
               : `${bytes(t.sizeWhenDone)}${t.percentDone < 1 ? ` · ${percent(t.percentDone)}` : ''}`}</span
-      >{#if full && client.fullSpeedAvailable && t.percentDone < 1}<span
+      >{#if t.bandwidthPriority === 1 || t.bandwidthPriority === -1}<span
+          class="torrent-priority"
+          title="Bandwidth priority relative to other torrents"
+          >{#if t.bandwidthPriority === 1}<ArrowUp size={12} />High priority{:else}<ArrowDown
+              size={12}
+            />Low priority{/if}</span
+        >{/if}
+      {#if full && client.fullSpeedAvailable && t.percentDone < 1}<span
           class="full-indicator"
           title={!client.fullSpeedAvailable
             ? 'Full speed controller is unavailable'

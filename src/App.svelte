@@ -861,17 +861,15 @@
     ><button role="menuitem" onclick={() => copy('hashString')}
       ><Copy size={15} />Copy info hash</button
     >
-    {#if actionTorrents.some((t) => t.percentDone < 1 || t.status === 5)}<div class="queue-actions">
-        <span>Queue</span>
-        <div class="queue-buttons">
-          {#each [{ method: 'queue-move-top', label: 'Move to top', icon: ArrowUpToLine }, { method: 'queue-move-up', label: 'Move up', icon: ChevronsUp }, { method: 'queue-move-down', label: 'Move down', icon: ChevronsDown }, { method: 'queue-move-bottom', label: 'Move to bottom', icon: MoveToBottom }] as action}<button
-              role="menuitem"
-              title={action.label}
-              aria-label={action.label}
-              onclick={() => run(action.method)}><action.icon size={16} /></button
-            >{/each}
-        </div>
-      </div>{/if}
+    {#if actionTorrents.some((t) => t.percentDone < 1 || t.status === 5)}
+      <hr />
+      <div class="menu-caption">Queue order</div>
+      {#each [{ method: 'queue-move-top', label: 'Move to top', icon: ArrowUpToLine }, { method: 'queue-move-up', label: 'Move up', icon: ChevronsUp }, { method: 'queue-move-down', label: 'Move down', icon: ChevronsDown }, { method: 'queue-move-bottom', label: 'Move to bottom', icon: MoveToBottom }] as action}
+        <button role="menuitem" onclick={() => run(action.method)}
+          ><action.icon size={15} />{action.label}</button
+        >
+      {/each}
+    {/if}
     <hr />
     <button role="menuitem" class="danger" onclick={requestRemove}
       ><Trash2 size={15} />Remove… <kbd>⌫</kbd></button

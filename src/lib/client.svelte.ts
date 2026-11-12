@@ -45,6 +45,7 @@ const overviewFields = [
   'downloadDir',
   'labels',
   'queuePosition',
+  'bandwidthPriority',
   'trackerStats',
   'fileCount',
 ];
@@ -63,7 +64,6 @@ const detailsFields = [
   'uploadLimit',
   'uploadLimited',
   'honorsSessionLimits',
-  'bandwidthPriority',
   'peer-limit',
   'seedRatioMode',
   'seedRatioLimit',

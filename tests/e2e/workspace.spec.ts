@@ -1021,7 +1021,7 @@ test('completed transfer actions explicitly control seeding and omit queue-start
   await row.click({ button: 'right' });
   await expect(page.getByRole('menuitem', { name: /^Stop seeding/ })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: /Start now|Download now|Pause/ })).toHaveCount(0);
-  await expect(page.locator('.queue-actions')).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: 'Move to top', exact: true })).toHaveCount(0);
   await page.getByRole('menuitem', { name: /^Stop seeding/ }).click();
   await expect
     .poll(() => calls.find((c) => c.method === 'torrent-stop')?.arguments.ids)
@@ -1498,4 +1498,23 @@ test('peer headers sort in both directions and availability is vertically center
   expect(
     Math.abs(progress!.y + progress!.height / 2 - (bounds!.y + bounds!.height / 2)),
   ).toBeLessThan(2);
+});
+
+test('torrent priority is visible in rows and queue actions have explicit labels', async ({
+  page,
+}) => {
+  const { torrents, calls } = await server(page);
+  torrents[0].bandwidthPriority = 1;
+  torrents[1].bandwidthPriority = -1;
+  await expect(page.getByTestId('torrent-row').first()).toContainText('High priority');
+  await expect(page.getByTestId('torrent-row').nth(1)).toContainText('Low priority');
+  await expect(page.getByTestId('torrent-row').nth(2).locator('.torrent-priority')).toHaveCount(0);
+  await page.getByTestId('torrent-row').first().click({ button: 'right' });
+  await expect(page.locator('.menu-caption').filter({ hasText: 'Queue order' })).toBeVisible();
+  for (const name of ['Move to top', 'Move up', 'Move down', 'Move to bottom'])
+    await expect(page.getByRole('menuitem', { name, exact: true })).toBeVisible();
+  await page.getByRole('menuitem', { name: 'Move to top', exact: true }).click();
+  await expect
+    .poll(() => calls.find((c) => c.method === 'queue-move-top')?.arguments.ids)
+    .toEqual([1]);
 });
