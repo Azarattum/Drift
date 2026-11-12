@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { ArrowDown, ArrowUp, X, Network } from '@lucide/svelte';
+  import { ArrowDown, ArrowUp, Network } from '@lucide/svelte';
   import type { Peer } from '../lib/types';
-  import { bytes, percent, speed } from '../lib/format';
+  import { bytes, speed } from '../lib/format';
   import { peerKey as key, peerPlot } from '../lib/peer-plot';
   let {
     peers,
@@ -10,7 +10,6 @@
   }: { peers: Peer[]; chosen?: string | null; compact?: boolean } = $props();
   let visible = $derived(peerPlot(peers, compact, chosen));
   const center = $derived(compact ? 96 : 132);
-  let selected = $derived(peers.find((p) => key(p) === chosen));
   $effect(() => {
     if (chosen && !peers.some((p) => key(p) === chosen)) chosen = null;
   });
@@ -113,46 +112,6 @@
           class="peer-center-label">You</text
         >
       </svg>{/if}
-  </div>
-  <div class="peer-detail-slot">
-    {#if selected}<div class="peer-card">
-        <button
-          class="icon-button peer-card-close"
-          aria-label="Clear peer selection"
-          onkeydown={(e) => {
-            if (e.key === 'Escape') {
-              e.preventDefault();
-              e.stopPropagation();
-              chosen = null;
-            }
-          }}
-          onclick={() => (chosen = null)}><X size={16} /></button
-        ><b title={selected.address}>{selected.address}</b><small class="peer-port"
-          >Port {selected.port}</small
-        ><span
-          >{selected.clientName || 'Unknown client'} · {percent(selected.progress)} complete</span
-        >
-        <div>
-          <span class="download"><ArrowDown size={12} />{speed(selected.rateToClient)}</span><span
-            class="upload"><ArrowUp size={12} />{speed(selected.rateToPeer)}</span
-          >
-        </div>
-        <dl class="peer-volumes" aria-label="Data transferred in the last minute">
-          <div>
-            <dt>Downloaded</dt>
-            <dd>
-              {typeof selected.bytes_to_client === 'number' ? bytes(selected.bytes_to_client) : '—'}
-            </dd>
-          </div>
-          <div>
-            <dt>Uploaded</dt>
-            <dd>
-              {typeof selected.bytes_to_peer === 'number' ? bytes(selected.bytes_to_peer) : '—'}
-            </dd>
-          </div>
-        </dl>
-        <small class="peer-volume-period">Last minute</small>
-      </div>{/if}{#if !selected}<p class="peer-selection-hint">Select a connection</p>{/if}
   </div>
   {#if peers.length}<div class="peer-legend">
       <span class="download"><ArrowDown size={13} />Download</span><span class="upload"

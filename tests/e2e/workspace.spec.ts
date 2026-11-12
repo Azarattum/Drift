@@ -171,7 +171,7 @@ test('file tree checkboxes send the complete folder selection; peers include a r
   await page
     .getByRole('button', { name: 'Inspect peer 192.0.2.1 port 51413', exact: true })
     .click();
-  await expect(page.locator('.peer-card')).toContainText('192.0.2.1');
+  await expect(page.locator('.peer-row[aria-pressed="true"]')).toContainText('192.0.2.1');
   await page.screenshot({ path: 'test-results/drift-peers.png', fullPage: true });
 });
 test('optional full-speed support and real control request', async ({ page }) => {
@@ -670,9 +670,9 @@ test('layout, details, peer card, and settings follow the reviewed composition',
   await page
     .getByRole('button', { name: 'Inspect peer 192.0.2.1 port 51413', exact: true })
     .click();
-  await expect(page.locator('.peer-card')).toBeVisible();
-  await page.getByRole('button', { name: 'Clear peer selection' }).click();
-  await expect(page.locator('.peer-card')).toHaveCount(0);
+  await expect(page.locator('.peer-row[aria-pressed="true"]')).toBeVisible();
+  await page.locator('.peer-row[aria-pressed="true"]').click();
+  await expect(page.locator('.peer-row[aria-pressed="true"]')).toHaveCount(0);
   await page.getByRole('button', { name: 'Close inspector' }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page
@@ -818,15 +818,15 @@ test('peer rows and diagram share selection including peers at the same address'
   await connection.click();
   expect(await rowPositions()).toEqual(rowsBefore);
   await expect(connection).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('.peer-card')).toContainText('Port 50001');
-  await expect(page.locator('.peer-card')).toContainText('A second connection');
+  await expect(page.locator('.peer-row[aria-pressed="true"]')).toContainText('50001');
+  await expect(page.locator('.peer-row[aria-pressed="true"]')).toContainText('A second connection');
   await expect(
     page.getByRole('button', { name: 'Inspect peer 192.0.2.1 port 50001', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true');
   await page
     .getByRole('button', { name: 'Inspect peer 192.0.2.1 port 51413', exact: true })
     .click();
-  await expect(page.locator('.peer-card')).toContainText('Port 51413');
+  await expect(page.locator('.peer-row[aria-pressed="true"]')).toContainText('51413');
   await expect(connection).toHaveAttribute('aria-pressed', 'false');
   expect(await rowPositions()).toEqual(rowsBefore);
 });
@@ -965,7 +965,7 @@ test('inspector arrow keys stay inside details and tabs and files follow keyboar
   await expect(page.locator('.inspector-title h2')).toHaveText('Ubuntu 24.04.4 Desktop.iso');
   await peer.click();
   await page.getByRole('button', { name: 'Diagram', exact: true }).click();
-  await expect(page.locator('.peer-card')).toContainText('Port 51413');
+  await expect(page.locator('.peer-row[aria-pressed="true"]')).toContainText('51413');
   await page.getByRole('button', { name: 'List', exact: true }).click();
   await expect(peer).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Close inspector' }).click();
@@ -1347,7 +1347,7 @@ test('peer diagram encodes speed and volume and keeps circle size when selected'
   expect(a.radius).toBeLessThan(b.radius);
   await slow.click();
   expect((await geometry(slow)).radius).toBe(b.radius);
-  await expect(page.locator('.peer-volumes')).toContainText('953.7 MB');
+  await expect(page.locator('.peer-row[aria-pressed="true"]')).toContainText('953.7 MB');
   peers[0].rateToClient = 0;
   await expect
     .poll(async () => (await geometry(fast)).distance, { timeout: 10000 })

@@ -184,7 +184,7 @@ try {
   await page.locator('[role="tab"]').nth(2).click();
   await page.locator('.peer-view-control button', { hasText: 'Diagram' }).click();
   await page.locator('[aria-label="Inspect peer 192.0.2.1 port 51413"]').click();
-  assert((await page.locator('.peer-card').textContent())?.includes('192.0.2.1'));
+  assert.equal(await page.locator('.peer-row[aria-pressed="true"]').count(), 1);
   await audit();
   await page.locator('[role="tab"]').nth(4).click();
   await page.locator('label', { hasText: 'Sequential download' }).locator('input').check();

@@ -2237,11 +2237,11 @@ dialog[data-closing='true']::backdrop {
 }
 .peer-map {
   display: grid;
-  grid-template-rows: auto 248px auto;
   column-gap: 12px;
   align-items: center;
   margin-bottom: 12px;
-  grid-template-columns: minmax(140px, 1fr) minmax(200px, 1.1fr);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto 220px auto;
 }
 .peer-visualization {
   min-width: 0;
@@ -3338,6 +3338,21 @@ input[type='number']::-webkit-outer-spin-button {
 }
 .storage-location {
   margin: 10px 0 16px;
+}
+.labels-action {
+  padding-left: 0;
+  color: var(--blue);
+}
+.peer-row .download small,
+.peer-row .upload small {
+  display: block;
+  color: var(--secondary);
+  font-size: 12px;
+  margin-top: 4px;
+}
+.peer-list > .hint {
+  padding: 20px 0;
+  margin: 0;
 }
 .storage-location dt {
   font-size: 12px;

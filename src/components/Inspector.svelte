@@ -72,6 +72,20 @@
   let collapsed = $state(new Set<string>());
   let fileQuery = $state('');
   let chosenPeer = $state<string | null>(null);
+  $effect(() => {
+    const selected = chosenPeer;
+    if (selected)
+      void tick().then(() => {
+        const row = [...panel.querySelectorAll<HTMLElement>('.peer-row')].find(
+          (el) => el.dataset.peer === selected,
+        );
+        if (!row) return;
+        const bounds = row.getBoundingClientRect(),
+          viewport = scrollPane.getBoundingClientRect();
+        if (bounds.top < viewport.top || bounds.bottom > viewport.bottom)
+          row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+  });
   let peerView = $state<'list' | 'diagram'>('list');
   $effect(() => {
     if (tab && peerView && scrollPane) scrollPane.scrollTop = 0;
@@ -376,7 +390,7 @@
           {#if s.progress !== undefined && t.percentDone < 1}<b>{percent(s.progress)}</b>{/if}
           <div class="stage-actions">
             <button
-              class="button secondary compact stage-control"
+              class="button primary compact stage-control"
               title={control.label}
               aria-label={control.label}
               onclick={() => client.safeAction(control.method, [t.id])}
@@ -500,11 +514,11 @@
           <dd class="mono">{t.downloadDir}</dd>
         </dl>
         <button
-          class="button secondary compact"
+          class="text-button labels-action"
           onclick={() => {
             labelsText = (t.labels || []).filter((x) => x !== label).join(', ');
             labelEditing = true;
-          }}><Tag size={16} />Manage labels</button
+          }}><Tag size={16} />Edit labels</button
         >
       </details>
     {:else if tab === 'Files'}
@@ -636,19 +650,21 @@
           compact={mobile}
           bind:chosen={chosenPeer}
         />{/if}
-      {#if !mobile || peerView === 'list'}
+      {#if true}
         <div class="section-heading">
           <h3>{t.peersConnected} connected peers</h3>
           <span class="muted">{t.peersSendingToUs} sending data</span>
         </div>
         <div class="table-scroll">
           <div class="peer-list">
-            <div class="peer-columns" aria-hidden="true">
-              <span>Peer / Client</span><span>Progress</span><span>Download</span><span>Upload</span
-              >
-            </div>
+            {#if t.peers?.length}<div class="peer-columns" aria-hidden="true">
+                <span>Peer / Client</span><span>Progress</span><span>Download</span><span
+                  >Upload</span
+                >
+              </div>{/if}
             {#each t.peers || [] as p (p.address + ':' + p.port)}<button
                 class="peer-row"
+                data-peer={`${p.address}:${p.port}`}
                 class:selected={chosenPeer === `${p.address}:${p.port}`}
                 aria-label={`Select peer ${p.address} port ${p.port}`}
                 aria-pressed={chosenPeer === `${p.address}:${p.port}`}
@@ -665,8 +681,14 @@
                       : ''}</small
                   ></span
                 ><span>{percent(p.progress)}</span><span class="download"
-                  >{speed(p.rateToClient)}</span
-                ><span class="upload">{speed(p.rateToPeer)}</span></button
+                  >{speed(p.rateToClient)}<small
+                    >{p.bytes_to_client === undefined ? '—' : bytes(p.bytes_to_client)} received</small
+                  ></span
+                ><span class="upload"
+                  >{speed(p.rateToPeer)}<small
+                    >{p.bytes_to_peer === undefined ? '—' : bytes(p.bytes_to_peer)} sent</small
+                  ></span
+                ></button
               >{:else}<p class="hint">{s.detail}</p>{/each}
           </div>
         </div>
