@@ -249,6 +249,9 @@ export class Client {
           await this.loadSession().catch(() => {});
         } else {
           await this.rpc.call('torrent-set', { ids: [id], ...values });
+          this.torrents = this.torrents.map((torrent) =>
+            torrent.id === id ? { ...torrent, ...values } : torrent,
+          );
           // Invalidate reads that began before the acknowledgement.
           if (this.details?.id === id) this.details = { ...this.details, ...values };
           if (this.focused?.id === id) {

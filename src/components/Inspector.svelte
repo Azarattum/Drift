@@ -36,6 +36,7 @@
   import { fileTree, flatten, type FileNode } from '../lib/files';
   import type { Torrent } from '../lib/types';
   import PeerGraph from './PeerGraph.svelte';
+  import PriorityControl from './PriorityControl.svelte';
   import Modal from './Modal.svelte';
   let {
     torrent: t,
@@ -900,15 +901,20 @@
                     />KB/s</span
                   ></label
                 >{/if}{/each}
-            <label class="setting-row"
-              ><span class="setting-copy"
+            <div class="setting-row priority-setting">
+              <span class="setting-copy"
                 ><b>Bandwidth priority</b><small>Priority relative to other torrents.</small></span
-              ><select name="bandwidthPriority" bind:value={options.bandwidthPriority}
-                ><option value={-1}>Low</option><option value={0}>Normal</option><option value={1}
-                  >High</option
-                ></select
-              ></label
-            >
+              >
+              <PriorityControl
+                label="Bandwidth priority"
+                value={options.bandwidthPriority}
+                disabled={!client.online || !optionsReady}
+                onchange={(value) => {
+                  options.bandwidthPriority = value;
+                  client.queueOption(t.id, 'bandwidthPriority', value, 0);
+                }}
+              />
+            </div>
           </div>
         </section>
         <section class="settings-group">
@@ -1001,20 +1007,12 @@
     }}
   >
     <div class="menu-caption">Priority</div>
-    {#each [{ value: 1, label: 'High', icon: ArrowUp }, { value: 0, label: 'Normal', icon: Minus }, { value: -1, label: 'Low', icon: ArrowDown }] as item}<button
-        role="menuitemradio"
-        aria-checked={priority(fileContext.node) === item.value}
-        onclick={() => {
-          const node = fileContext!.node;
-          closeFileMenu();
-          void setPriority(node, item.value);
-        }}
-        ><item.icon size={15} /><span>{item.label}</span
-        >{#if priority(fileContext.node) === item.value}<Check
-            size={15}
-            class="menu-check"
-          />{/if}</button
-      >{/each}
+    <PriorityControl
+      value={priority(fileContext.node)}
+      onchange={(value) => {
+        void setPriority(fileContext!.node, value);
+      }}
+    />
     <hr />
     <button
       role="menuitem"
@@ -1044,16 +1042,15 @@
       <p class="file-option-meta">
         {bytes(rename.length)} · {percent(rename.length ? rename.completed / rename.length : 1)} downloaded
       </p>
-      <label
-        >Download priority<select
-          aria-label="Download priority"
+      <div class="priority-field">
+        <span>Download priority</span><PriorityControl
+          label="Download priority"
           value={priority(rename)}
-          onchange={(e) => setPriority(rename!, Number(e.currentTarget.value))}
-          ><option value={-1}>Low</option><option value={0}>Normal</option><option value={1}
-            >High</option
-          ></select
-        ></label
-      >
+          onchange={(value) => {
+            void setPriority(rename!, value);
+          }}
+        />
+      </div>
       <label>Name<input class="input" required bind:value={renameValue} /></label><button
         class="button primary"
         disabled={renameValue === rename.name}>Rename</button

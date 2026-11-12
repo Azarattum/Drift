@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ArrowDownWideNarrow, ArrowUpNarrowWide } from '@lucide/svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
+  import PriorityControl from './components/PriorityControl.svelte';
   import { preference, savePreference } from './lib/preferences';
   import { motion } from './lib/motion';
   import { magnetLink } from './lib/clipboard';
@@ -101,7 +102,9 @@
   let selectedTorrents = $derived(client.torrents.filter((t) => client.selected.includes(t.id)));
   let anyRunning = $derived(selectedTorrents.some((t) => t.status !== 0));
   let actionTorrents = $derived(
-    context && !client.selected.includes(context.t.id) ? [context.t] : selectedTorrents,
+    context && !client.selected.includes(context.t.id)
+      ? [client.torrents.find((t) => t.id === context?.t.id) || context.t]
+      : selectedTorrents,
   );
   let actionAnyRunning = $derived(actionTorrents.some((t) => t.status !== 0));
   let actionAllComplete = $derived(
@@ -861,6 +864,21 @@
     ><button role="menuitem" onclick={() => copy('hashString')}
       ><Copy size={15} />Copy info hash</button
     >
+    <hr />
+    <div class="menu-caption">Bandwidth priority</div>
+    <PriorityControl
+      label="Bandwidth priority"
+      value={actionTorrents.every(
+        (t) => t.bandwidthPriority === actionTorrents[0]?.bandwidthPriority,
+      )
+        ? actionTorrents[0]?.bandwidthPriority
+        : undefined}
+      disabled={!client.online}
+      onchange={(value) => {
+        for (const torrent of actionTorrents)
+          client.queueOption(torrent.id, 'bandwidthPriority', value, 0);
+      }}
+    />
     {#if actionTorrents.some((t) => t.percentDone < 1 || t.status === 5)}
       <hr />
       <div class="menu-caption">Queue order</div>

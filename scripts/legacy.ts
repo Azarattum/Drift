@@ -166,7 +166,12 @@ try {
   await page.locator('[role="tree"]').waitFor();
   await page.locator('.file-actions').first().click();
   await page.locator('[role=menuitem]', { hasText: 'Rename…' }).click();
-  assert.equal(await page.locator('select[aria-label="Download priority"]').inputValue(), '0');
+  assert.equal(
+    await page
+      .locator('[aria-label="Download priority"] button[aria-pressed="true"]')
+      .textContent(),
+    'Normal',
+  );
   await page.locator('[aria-label="Close dialog"]').click();
   await page.locator('dialog').waitFor({ state: 'detached' });
   await page.locator('input[aria-label="Download Ubuntu 24.04"]').check();

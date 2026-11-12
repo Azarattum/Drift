@@ -765,9 +765,11 @@ test('single-file priorities fit and labels filter the library', async ({ page }
     .getByRole('button', { name: 'Actions for 7.Days.to.End.with.You.v1.2.02.rar', exact: true })
     .click();
   await page.getByRole('menuitem', { name: 'Rename…', exact: true }).click();
-  await expect(page.getByRole('combobox', { name: 'Download priority', exact: true })).toHaveValue(
-    '0',
-  );
+  await expect(
+    page
+      .getByRole('group', { name: 'Download priority', exact: true })
+      .getByRole('button', { name: 'Normal', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('tab', { name: 'Overview', exact: true }).click();
@@ -902,7 +904,10 @@ test('deep phone file trees preserve ancestry and send the exact folder file ind
   await page.getByRole('button', { name: 'Actions for Project', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Rename…', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Folder options' })).toBeVisible();
-  await page.getByRole('combobox', { name: 'Download priority', exact: true }).selectOption('1');
+  await page
+    .getByRole('group', { name: 'Download priority', exact: true })
+    .getByRole('button', { name: 'High', exact: true })
+    .click();
   await expect
     .poll(
       () =>
@@ -1099,11 +1104,11 @@ test('file right-click changes priority directly and phone scrollers fit their v
   await page.getByRole('tab', { name: 'Files', exact: true }).click();
   await page.getByRole('treeitem').first().click({ button: 'right' });
   await expect(page.getByRole('menu', { name: 'File actions' })).toBeVisible();
-  await expect(page.getByRole('menuitemradio', { name: 'Normal', exact: true })).toHaveAttribute(
-    'aria-checked',
+  await expect(page.getByRole('button', { name: 'Normal', exact: true })).toHaveAttribute(
+    'aria-pressed',
     'true',
   );
-  await page.getByRole('menuitemradio', { name: 'High', exact: true }).click();
+  await page.getByRole('button', { name: 'High', exact: true }).click();
   await expect
     .poll(
       () =>
@@ -1517,4 +1522,32 @@ test('torrent priority is visible in rows and queue actions have explicit labels
   await expect
     .poll(() => calls.find((c) => c.method === 'queue-move-top')?.arguments.ids)
     .toEqual([1]);
+});
+
+test('torrent priority segmented control highlights and saves each mode', async ({ page }) => {
+  const { calls } = await server(page);
+  await page.getByTestId('torrent-row').first().click({ button: 'right' });
+  const control = page.getByRole('group', { name: 'Bandwidth priority' });
+  await expect(control.getByRole('button', { name: 'Normal', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  for (const [name, value] of [
+    ['High', 1],
+    ['Low', -1],
+    ['Normal', 0],
+  ] as const) {
+    await control.getByRole('button', { name, exact: true }).click();
+    await expect(control.getByRole('button', { name, exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await expect
+      .poll(
+        () =>
+          calls.filter((c) => c.method === 'torrent-set' && c.arguments.bandwidthPriority === value)
+            .length,
+      )
+      .toBeGreaterThan(0);
+  }
 });

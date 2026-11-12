@@ -3498,3 +3498,39 @@ input[type='number']::-webkit-outer-spin-button {
   font-size: 12px;
   white-space: nowrap;
 }
+
+.priority-control {
+  display: flex;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--soft);
+  gap: 2px;
+}
+.priority-control button {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 44px;
+  padding: 6px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--secondary);
+}
+.priority-control button[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 3px #00000012;
+}
+.priority-setting {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.priority-setting .priority-control {
+  width: 100%;
+}
+.priority-field {
+  display: grid;
+  gap: 8px;
+}
