@@ -110,7 +110,7 @@
       ><span><i class="status-dot"></i>Idle</span>
     </div>{/if}
   {#if visible.length < peers.length}<p class="peer-map-count">
-      {visible.length} of {peers.length} shown · all peers below
+      {visible.length} of {peers.length} shown · {compact ? 'all peers in List' : 'all peers below'}
     </p>{/if}
   {#if selected}<div class="peer-card">
       <button
