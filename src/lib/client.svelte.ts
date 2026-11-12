@@ -1,3 +1,4 @@
+import { copyText } from './clipboard';
 import { Transmission } from './rpc';
 import { stage } from './stage';
 import type { Capabilities, Filter, Sample, Torrent } from './types';
@@ -75,6 +76,7 @@ export class Client {
   ready = $state(false);
   error = $state('');
   notice = $state('');
+  copyValue = $state<string | null>(null);
   busy = $state(new Set<number>());
   filter = $state<Filter>('all');
   query = $state('');
@@ -129,6 +131,14 @@ export class Client {
     this.notice = text;
     clearTimeout(this.noticeTimer);
     this.noticeTimer = setTimeout(() => (this.notice = ''), 4500);
+  }
+  async copy(text: string) {
+    try {
+      await copyText(text);
+      this.toast('Copied');
+    } catch {
+      this.copyValue = text;
+    }
   }
   async poll(force = false) {
     if (this.polling) return;

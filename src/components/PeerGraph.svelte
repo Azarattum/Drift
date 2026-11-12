@@ -58,7 +58,7 @@
         <title>{p.address} · {p.clientName} · {percent(p.progress)}</title><circle
           cx={pos.x}
           cy={pos.y}
-          r="12"
+          r="26"
           fill="transparent"
         /><circle
           cx={pos.x}
@@ -77,7 +77,7 @@
       stroke-linecap="round"
       stroke-linejoin="round"
     />
-    {#if !peers.length}<text x="160" y="255" text-anchor="middle" fill="var(--muted)" font-size="11"
+    {#if !peers.length}<text x="160" y="255" text-anchor="middle" fill="var(--muted)" font-size="12"
         >No peer connections yet</text
       >{/if}
   </svg>

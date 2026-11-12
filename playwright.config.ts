@@ -13,5 +13,8 @@ export default defineConfig({
     url: 'http://127.0.0.1:5178',
     reuseExistingServer: !process.env.CI,
   },
-  projects: [{ name: 'desktop', use: { viewport: { width: 1440, height: 960 } } }],
+  projects: [
+    { name: 'desktop', use: { viewport: { width: 1440, height: 960 } } },
+    { name: 'webkit', use: { browserName: 'webkit', viewport: { width: 1440, height: 960 } } },
+  ],
 });

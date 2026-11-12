@@ -1,127 +1,122 @@
 <script lang="ts">
   import { ArrowDown, ArrowUp } from '@lucide/svelte';
+  import { LineChart } from 'layerchart/svg';
+  import { scaleTime } from 'd3-scale';
+  import { curveMonotoneX } from 'd3-shape';
   import { speed } from '../lib/format';
+  import { motion } from '../lib/motion';
   import type { Sample } from '../lib/types';
-  let { samples, compact = false }: { samples: Sample[]; compact?: boolean } = $props();
-  let hover = $state<number | null>(null);
-  let width = $state(800);
-  const H = 130,
-    TOP = 12,
-    BOTTOM = 112;
-  let max = $derived(Math.max(1024, ...samples.flatMap((s) => [s.down, s.up])) * 1.15);
-  let current = $derived(samples[hover ?? samples.length - 1]);
-  const x = (i: number) =>
-    1 + ((samples[i].at - samples[0].at) / Math.max(1, samples.at(-1)!.at - samples[0].at)) * 798;
-  const y = (n: number) => BOTTOM - (n / max) * (BOTTOM - TOP);
-  function path(key: 'down' | 'up') {
-    if (!samples.length) return '';
-    let p = `M ${x(0)} ${y(samples[0][key])}`;
-    for (let i = 1; i < samples.length; i++) {
-      const mid = (x(i - 1) + x(i)) / 2;
-      p += ` C ${mid} ${y(samples[i - 1][key])} ${mid} ${y(samples[i][key])} ${x(i)} ${y(samples[i][key])}`;
-    }
-    return p;
-  }
-  function scrub(e: PointerEvent) {
-    const box = e.currentTarget as HTMLElement;
-    hover = Math.max(
-      0,
-      Math.min(
-        samples.length - 1,
-        Math.round(
-          ((e.clientX - box.getBoundingClientRect().left) / box.getBoundingClientRect().width) *
-            (samples.length - 1),
-        ),
-      ),
-    );
-  }
+  let { samples, expanded = false }: { samples: Sample[]; compact?: boolean; expanded?: boolean } =
+    $props();
+  let windowMinutes = $state(2);
+  let width = $state(700);
+  let keyboardIndex = $state<number | null>(null);
+  const timeScale = scaleTime();
+  const series = [
+    { key: 'down', label: 'Download', color: 'var(--blue)' },
+    { key: 'up', label: 'Upload', color: 'var(--teal)' },
+  ];
+  let last = $derived(samples.at(-1));
+  let end = $derived(last?.at ?? Date.now());
+  let peak = $derived(
+    Math.max(
+      1024,
+      ...samples.filter((s) => s.at >= end - windowMinutes * 60000).flatMap((s) => [s.down, s.up]),
+    ),
+  );
+  let unit = $derived(peak >= 1024 * 1024 ? 1024 * 1024 : peak >= 1024 ? 1024 : 1);
+  let unitLabel = $derived(unit === 1024 * 1024 ? 'MB/s' : unit === 1024 ? 'KB/s' : 'B/s');
+  let data = $derived(
+    samples
+      .filter((s) => s.at >= end - windowMinutes * 60000)
+      .map((s) => ({ ...s, at: new Date(s.at), down: s.down / unit, up: s.up / unit })),
+  );
+  let domain = $derived([new Date(end - windowMinutes * 60000), new Date(end)]);
+
+  let current = $derived(samples[keyboardIndex ?? samples.length - 1]);
+  const time = (value: Date | number) =>
+    new Date(value).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    });
+  const tick = time;
 </script>
 
-<section class:compact class="speed-chart" aria-label="Transfer speed history">
+<section class="speed-chart" aria-label="Transfer speed history" bind:clientWidth={width}>
   <div class="chart-heading">
-    <span class="eyebrow">TRANSFER ACTIVITY</span>
+    <h2>Transfer activity</h2>
     <div class="chart-legend">
-      <span class="download"><ArrowDown size={13} /><b>{speed(current?.down)}</b></span><span
-        class="upload"><ArrowUp size={13} /><b>{speed(current?.up)}</b></span
-      ><span class="muted chart-time"
-        >{hover !== null && current
-          ? new Date(current.at).toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit',
-            })
-          : 'Live'}</span
+      <span class="download"><ArrowDown size={15} /><b>{speed(current?.down)}</b></span><span
+        class="upload"><ArrowUp size={15} /><b>{speed(current?.up)}</b></span
+      >
+      <select aria-label="Chart time range" bind:value={windowMinutes}
+        ><option value={2}>2 min</option><option value={5}>5 min</option></select
       >
     </div>
   </div>
   <div
-    class="chart-surface"
-    bind:clientWidth={width}
-    onpointermove={scrub}
-    onpointerleave={() => (hover = null)}
+    class="chart-plot"
     role="slider"
+    tabindex="0"
     aria-label="Inspect transfer speed history"
     aria-valuemin={0}
     aria-valuemax={Math.max(0, samples.length - 1)}
-    aria-valuenow={Math.max(0, hover ?? samples.length - 1)}
-    aria-valuetext={`Download ${speed(current?.down)}, upload ${speed(current?.up)}`}
-    tabindex="0"
+    aria-valuenow={Math.max(0, keyboardIndex ?? samples.length - 1)}
+    aria-valuetext={`${current ? time(current.at) : 'No samples'}. Download ${speed(current?.down)}, upload ${speed(current?.up)}`}
     onkeydown={(e) => {
       if (['ArrowLeft', 'ArrowRight'].includes(e.key)) {
         e.preventDefault();
-        hover = Math.max(
+        e.stopPropagation();
+        keyboardIndex = Math.max(
           0,
           Math.min(
             samples.length - 1,
-            (hover ?? samples.length - 1) + (e.key === 'ArrowLeft' ? -1 : 1),
+            (keyboardIndex ?? samples.length - 1) + (e.key === 'ArrowLeft' ? -1 : 1),
           ),
         );
-      } else if (e.key === 'Escape') hover = null;
+      } else if (e.key === 'Escape') keyboardIndex = null;
     }}
+    onblur={() => (keyboardIndex = null)}
   >
-    <svg viewBox={`0 0 800 ${H}`} preserveAspectRatio="none" aria-hidden="true">
-      {#each [0, 0.5, 1] as ratio}<line
-          x1="0"
-          x2="800"
-          y1={y(max * ratio)}
-          y2={y(max * ratio)}
-          class="chart-grid"
-        />{/each}
-      {#if samples.length > 1}
-        <path
-          d={`${path('down')} L 799 ${BOTTOM} L 1 ${BOTTOM} Z`}
-          fill="var(--blue)"
-          opacity=".055"
-        />
-        <path d={path('down')} class="chart-line" stroke="var(--blue)" />
-        <path d={path('up')} class="chart-line" stroke="var(--teal)" />
-      {/if}
-      {#if hover !== null && current}<line
-          x1={x(hover)}
-          x2={x(hover)}
-          y1="0"
-          y2={BOTTOM}
-          stroke="var(--muted)"
-          stroke-dasharray="3 4"
-        /><circle
-          cx={x(hover)}
-          cy={y(current.down)}
-          r={(3 * 800) / width}
-          fill="var(--blue)"
-        /><circle cx={x(hover)} cy={y(current.up)} r={(3 * 800) / width} fill="var(--teal)" />{/if}
-    </svg>
-    <span class="chart-max">{speed(max / 1.15)}</span>
-    {#if samples.length < 2}<span class="chart-empty">Waiting for live samples</span>{/if}
-  </div>
-  <div class="chart-axis">
-    <span
-      >{samples[0]
-        ? new Date(samples[0].at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        : '—'}</span
-    ><span
-      >{samples.length > 1
-        ? `${Math.round((samples.at(-1)!.at - samples[0].at) / 1000)}s of activity`
-        : 'Updates every 2 seconds'}</span
-    ><span>Now</span>
+    <LineChart
+      {data}
+      x="at"
+      xScale={timeScale}
+      xDomain={domain}
+      {series}
+      seriesLayout="overlap"
+      yDomain={[0, Math.max(1, Math.ceil(peak / unit))]}
+      yNice={true}
+      height={expanded ? 270 : width < 500 ? 160 : 190}
+      padding={{ top: 14, right: 12, bottom: 28, left: width < 500 ? 66 : 76 }}
+      motion={motion(160) ? { type: 'tween', duration: 160 } : 'none'}
+      props={{
+        spline: { curve: curveMonotoneX, strokeWidth: 2 },
+        xAxis: {
+          ticks: width < 500 ? 3 : 5,
+          format: tick,
+          tickOcclusion: { padding: 12, priority: 'start-end' },
+          rule: false,
+          tickMarks: false,
+        },
+        yAxis: {
+          ticks: 3,
+          format: (v: number) =>
+            `${v.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${unitLabel}`,
+          rule: false,
+          tickMarks: false,
+        },
+        grid: { stroke: 'var(--border)' },
+        tooltip: {
+          header: { format: time },
+          item: { format: (v: number) => speed(v * unit) },
+          hideTotal: true,
+          root: { motion: 'none', fadeDuration: motion(100) },
+        },
+      }}
+    />
+    {#if samples.length < 2}<div class="chart-collecting">Collecting live history</div>{/if}
   </div>
 </section>

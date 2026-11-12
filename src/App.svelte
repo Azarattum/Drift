@@ -1,5 +1,6 @@
 <script lang="ts">
   import { motion } from './lib/motion';
+  import { magnetLink } from './lib/clipboard';
   import { onMount, tick } from 'svelte';
   import { fade, fly, slide } from 'svelte/transition';
   import { flip } from 'svelte/animate';
@@ -54,7 +55,11 @@
     dragging = $state(false);
   let modal = $state<null | 'add' | 'remove' | 'move' | 'settings'>(null);
   let settingsTab = $state('Connection');
-  let queryInput: HTMLInputElement;
+  let mobile = $state(matchMedia('(max-width: 900px)').matches);
+  let mobileSection = $state<'transfers' | 'activity' | 'settings'>('transfers');
+  let mobileSettingsInitialized = false;
+  let filterSheet = $state(false);
+  let queryInput = $state<HTMLInputElement>();
   let context = $state<{ x: number; y: number; t: Torrent } | null>(null);
   let addText = $state(''),
     addDir = $state(''),
@@ -90,6 +95,12 @@
   });
 
   onMount(() => {
+    const mobileMedia = matchMedia('(max-width: 900px)');
+    const viewportChanged = (e: MediaQueryListEvent) => {
+      mobile = e.matches;
+      if (!mobile) mobileSection = 'transfers';
+    };
+    mobileMedia.addEventListener('change', viewportChanged);
     const media = matchMedia('(prefers-color-scheme: dark)');
     const themeChanged = (event: MediaQueryListEvent) => (systemDark = event.matches);
     media.addEventListener('change', themeChanged);
@@ -105,17 +116,25 @@
     };
     document.addEventListener('visibilitychange', visibility);
     return () => {
+      mobileMedia.removeEventListener('change', viewportChanged);
       media.removeEventListener('change', themeChanged);
       stopped = true;
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', visibility);
     };
   });
-  function openSettings(tab = 'Connection') {
-    settingsTab = tab;
-    sessionDraft = { ...client.session };
-    endpoint = client.rpc.endpoint;
-    modal = 'settings';
+  function openSettings(tab?: string) {
+    if (!mobile || !mobileSettingsInitialized) {
+      sessionDraft = { ...client.session };
+      endpoint = client.rpc.endpoint;
+      settingsTab = tab || 'Connection';
+    } else if (tab) settingsTab = tab;
+    context = null;
+    if (mobile) {
+      mobileSettingsInitialized = true;
+      mobileSection = 'settings';
+      client.selected = [];
+    } else modal = 'settings';
   }
   function openAdd() {
     addDir = client.session['download-dir'] || '';
@@ -128,9 +147,18 @@
       y: Math.min(Math.max(8, e.clientY || rect?.bottom || 8), innerHeight - 380),
       t,
     };
-    void tick().then(() =>
-      document.querySelector<HTMLButtonElement>('.context-menu button')?.focus(),
-    );
+    void tick().then(() => {
+      const menu = document.querySelector<HTMLElement>('.context-menu');
+      if (context && menu && !mobile) {
+        const bounds = menu.getBoundingClientRect();
+        context = {
+          ...context,
+          x: Math.max(8, Math.min(context.x, innerWidth - bounds.width - 8)),
+          y: Math.max(8, Math.min(context.y, innerHeight - bounds.height - 8)),
+        };
+      }
+      menu?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
+    });
   }
   function requestRemove() {
     if (!client.selected.length) return;
@@ -139,15 +167,15 @@
     context = null;
   }
   async function copy(kind: 'magnetLink' | 'hashString') {
-    try {
-      const r = await client.rpc.call('torrent-get', { ids: client.selected, fields: [kind] });
-      const text = r.torrents.map((t: Torrent) => t[kind]).join('\n');
-      await navigator.clipboard.writeText(text);
-      client.toast('Copied');
-    } catch {
-      client.toast('Clipboard unavailable. Copy the hash from the inspector.');
-    }
+    const text = selectedTorrents
+      .map((t) =>
+        kind === 'hashString'
+          ? t.hashString
+          : magnetLink(client.details?.id === t.id ? client.details : t),
+      )
+      .join('\n');
     context = null;
+    await client.copy(text);
   }
   function run(method: string) {
     context = null;
@@ -183,7 +211,10 @@
         });
         last = (r['torrent-added'] || r['torrent-duplicate'])?.id;
       }
-      if (last !== undefined) client.selected = [last];
+      if (last !== undefined) {
+        client.selected = [last];
+        if (mobile) mobileSection = 'transfers';
+      }
       modal = null;
       addText = '';
       addFiles = [];
@@ -343,226 +374,279 @@
     } else client.toast('Drop .torrent files to add transfers');
   }}
 />
-<div class="app-shell" class:inspecting={inspector && !!client.focused}>
+<div class="app-shell" class:inspecting={inspector && !!client.focused && !mobile} class:mobile>
   {#if sidebar}<button
       class="sidebar-scrim"
       aria-label="Close navigation"
       onclick={() => (sidebar = false)}
     ></button>{/if}
-  <aside class="sidebar" class:open={sidebar}>
-    <a
-      class="brand"
-      href="./"
-      onclick={(e) => {
-        e.preventDefault();
-        client.filter = 'all';
-        client.query = '';
-        sidebar = false;
-      }}><span class="brand-mark">d</span><span>drift<span class="brand-period">.</span></span></a
-    >
-    <div class="sidebar-label">LIBRARY</div>
-    <nav aria-label="Transfer filters">
-      {#each filters as f}<button
-          class:active={client.filter === f.id}
-          onclick={() => {
-            client.filter = f.id;
-            sidebar = false;
-            client.selected = [];
-          }}
-          ><f.icon size={16} /><span>{f.label}</span><small>{client.count(f.id) || ''}</small
-          ></button
-        >{/each}
-    </nav>
-    <div class="sidebar-bottom">
-      <div class="storage">
-        <HardDrive size={14} />
-        <div>
-          <span
-            >{client.session['download-dir-free-space'] !== undefined
-              ? `${bytes(client.session['download-dir-free-space'])} available`
-              : 'Storage'}</span
-          ><small title={client.session['download-dir']}
-            >{client.session['download-dir'] || 'Connect a daemon'}</small
+  {#if !mobile}<aside class="sidebar" class:open={sidebar}>
+      <a
+        class="brand"
+        aria-label="Drift"
+        href="./"
+        onclick={(e) => {
+          e.preventDefault();
+          client.filter = 'all';
+          client.query = '';
+          sidebar = false;
+        }}
+        ><span class="brand-mark" aria-hidden="true">d</span><span aria-hidden="true"
+          >rift<span class="brand-period">.</span></span
+        ></a
+      >
+      <div class="sidebar-label">LIBRARY</div>
+      <nav aria-label="Transfer filters">
+        {#each filters as f}<button
+            class:active={client.filter === f.id}
+            onclick={() => {
+              client.filter = f.id;
+              sidebar = false;
+              client.selected = [];
+            }}
+            ><f.icon size={16} /><span>{f.label}</span><small>{client.count(f.id) || ''}</small
+            ></button
+          >{/each}
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="storage">
+          <HardDrive size={14} />
+          <div>
+            <span
+              >{client.session['download-dir-free-space'] !== undefined
+                ? `${bytes(client.session['download-dir-free-space'])} available`
+                : 'Storage'}</span
+            ><small title={client.session['download-dir']}
+              >{client.session['download-dir'] || 'Connect a daemon'}</small
+            >
+          </div>
+        </div>
+        <button class="nav-settings" onclick={() => openSettings()}
+          ><Settings size={16} /><span>Settings</span><kbd>⌘ ,</kbd></button
+        >
+        <div class="sidebar-footer">
+          <span class="server-status"
+            ><i class:connected={client.online}></i>{client.online
+              ? 'Connected'
+              : client.ready
+                ? 'Reconnecting'
+                : 'Connecting'}</span
+          ><button
+            class="icon-button"
+            title={`Theme: ${theme}`}
+            aria-label="Change color theme"
+            onclick={() =>
+              (theme = theme === 'system' ? 'dark' : theme === 'dark' ? 'light' : 'system')}
+            >{#if dark}<Moon size={14} />{:else}<Sun size={14} />{/if}</button
           >
         </div>
       </div>
-      <button class="nav-settings" onclick={() => openSettings()}
-        ><Settings size={16} /><span>Settings</span><kbd>⌘ ,</kbd></button
-      >
-      <div class="sidebar-footer">
-        <span class="server-status"
-          ><i class:connected={client.online}></i>{client.online
-            ? 'Connected'
-            : client.ready
-              ? 'Reconnecting'
-              : 'Connecting'}</span
-        ><button
-          class="icon-button"
-          title={`Theme: ${theme}`}
-          aria-label="Change color theme"
-          onclick={() =>
-            (theme = theme === 'system' ? 'dark' : theme === 'dark' ? 'light' : 'system')}
-          >{#if dark}<Moon size={14} />{:else}<Sun size={14} />{/if}</button
-        >
-      </div>
-    </div>
-  </aside>
+    </aside>{/if}
   <main class="main-pane">
-    <header class="topbar">
-      <div class="heading-left">
-        <button
-          class="icon-button mobile-menu"
-          aria-label="Open navigation"
-          onclick={() => (sidebar = true)}><Menu size={18} /></button
+    {#if mobile && mobileSection === 'settings'}
+      <header class="mobile-page-header"><h1>Settings</h1></header>
+      <div class="mobile-page-scroll mobile-settings">{@render settingsContent()}</div>
+    {:else if mobile && mobileSection === 'activity'}
+      <header class="mobile-page-header">
+        <h1>Activity</h1>
+        <span class="server-status"
+          ><i class:connected={client.online}></i>{client.online ? 'Live' : 'Offline'}</span
         >
-        <h1>{activeTitle}</h1>
-        <span class="count-badge">{client.visible.length}</span>
-      </div>
-      <div class="topbar-actions">
-        <div class="search-box">
-          <Search size={14} /><input
-            bind:this={queryInput!}
-            aria-label="Search transfers"
-            placeholder="Search"
-            bind:value={client.query}
-          />{#if client.query}<button
-              class="tiny-button"
-              aria-label="Clear search"
-              onclick={() => (client.query = '')}><X size={12} /></button
-            >{:else}<kbd>⌘ F</kbd>{/if}
+      </header>
+      <div class="mobile-page-scroll activity-page">
+        <SpeedGraph samples={client.samples} expanded />
+        <div class="activity-stats">
+          <div>
+            <span>Downloaded this session</span><b
+              >{bytes(client.stats['current-stats']?.downloadedBytes || 0)}</b
+            >
+          </div>
+          <div>
+            <span>Uploaded this session</span><b
+              >{bytes(client.stats['current-stats']?.uploadedBytes || 0)}</b
+            >
+          </div>
         </div>
-        <button
-          class="button primary add-button"
-          aria-label="Add torrent"
-          onclick={openAdd}
-          disabled={!client.online}><Plus size={15} /><span>Add torrent</span></button
-        >
-      </div>
-    </header>
-    {#if client.error}<div class="connection-error" role="alert">
-        <CircleAlert size={15} /><span
-          >{client.error}{#if client.ready}
-            · Showing last received data{/if}</span
-        ><button class="text-button" onclick={() => client.poll(true)}>Retry</button><button
-          class="text-button"
-          onclick={() => openSettings()}>Connection settings</button
-        >
-      </div>{/if}
-    <div class="overview-toolbar">
-      <div class="overview-state">
-        <span class="live-dot" class:connected={client.online}></span>{client.online
-          ? `${client.torrents.filter((t) => t.rateDownload || t.rateUpload).length} active transfers`
-          : client.ready
-            ? 'Connection interrupted'
-            : 'Connecting to Transmission…'}
-      </div>
-      <div>
-        <button
-          class="icon-button"
-          aria-label="Toggle speed graph"
-          aria-pressed={chart}
-          onclick={() => (chart = !chart)}><Activity size={16} /></button
-        ><button
-          class="icon-button"
-          aria-label="Toggle inspector"
-          aria-pressed={inspector}
-          onclick={() => (inspector = !inspector)}><Info size={16} /></button
-        >
-      </div>
-    </div>
-    {#if chart}<div class="graph-wrap" transition:slide={{ duration: motion(180) }}>
-        <SpeedGraph samples={client.samples} />
-      </div>{/if}
-    <div class="list-toolbar">
-      {#if client.selected.length > 1}<span class="selection-count"
-          >{client.selected.length} selected</span
-        ><button
-          class="text-button"
-          onclick={() => run(anyRunning ? 'torrent-stop' : 'torrent-start')}
-          >{#if anyRunning}<Pause size={13} />Pause{:else}<Play size={13} />Resume{/if}</button
-        ><button class="text-button danger" onclick={requestRemove}
-          ><Trash2 size={13} />Remove</button
-        ><button class="text-button" onclick={() => (client.selected = [])}>Clear</button
-        >{:else}<span class="eyebrow">TRANSFERS</span>{/if}
-      <div class="sort-control">
-        <ArrowUpDown size={12} /><select aria-label="Sort transfers" bind:value={client.sort}
-          ><option value="addedDate">Date added</option><option value="name">Name</option><option
-            value="rateDownload">Download speed</option
-          ><option value="percentDone">Progress</option><option value="sizeWhenDone">Size</option
-          ><option value="queuePosition">Queue order</option></select
-        ><button
-          class="tiny-button"
-          aria-label="Reverse sort direction"
-          onclick={() => (client.ascending = !client.ascending)}
-          ><ChevronDown
-            size={13}
-            style={`transform:rotate(${client.ascending ? 180 : 0}deg)`}
-          /></button
-        >
-      </div>
-    </div>
-    <div class="torrent-list" role="listbox" aria-label="Transfers" aria-multiselectable="true">
-      {#each client.visible as t (t.id)}<div
-          data-row={t.id}
-          animate:flip={{
-            duration: matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200,
-          }}
-        >
-          <TorrentRow
-            torrent={t}
-            selected={client.selected.includes(t.id)}
-            open={() => {
+        <div class="section-heading"><h2>Active transfers</h2></div>
+        {#each client.torrents.filter((t) => t.rateDownload > 0 || t.rateUpload > 0) as t (t.id)}<button
+            class="activity-transfer"
+            onclick={() => {
               client.select(t);
               inspector = true;
+              mobileSection = 'transfers';
             }}
-            menu={openMenu}
-          />
-        </div>{:else}<div class="empty-library">
-          {#if !client.ready}<span class="loading-ring"></span>
-            <h2>Connecting to Transmission</h2>
-            <p>
-              {client.error
-                ? 'Open settings to check your connection.'
-                : 'Your transfers will appear here.'}
-            </p>{:else if client.query}<Search size={28} />
-            <h2>No matching transfers</h2>
-            <p>Try a different name, label, or folder.</p>
-            <button class="button" onclick={() => (client.query = '')}>Clear search</button
-            >{:else if client.filter !== 'all'}<CheckCheck size={28} />
-            <h2>Nothing here</h2>
-            <p>No transfers in this view.</p>
-            <button class="text-button" onclick={() => (client.filter = 'all')}
-              >Show all transfers</button
-            >{:else}<ArrowDownToLine size={32} />
-            <h2>A little room for something new.</h2>
-            <p>Drop a torrent file, or add a magnet link.</p>
-            <button class="button primary" onclick={openAdd}><Plus size={15} />Add torrent</button
-            >{/if}
-        </div>{/each}
-    </div>
-    <footer class="statusbar">
-      <span
-        >{client.torrents.length} transfer{client.torrents.length === 1 ? '' : 's'}<span
-          class="statusbar-size"
-        >
-          · {bytes(client.torrents.reduce((n, t) => n + t.sizeWhenDone, 0))}</span
-        ></span
-      >
-      <div>
-        <span class="download"><ArrowDown size={12} />{speed(client.stats.downloadSpeed)}</span
-        ><span class="upload"><ArrowUp size={12} />{speed(client.stats.uploadSpeed)}</span>
+            ><span>{t.name}</span><small
+              ><span class="download">↓ {speed(t.rateDownload)}</span><span class="upload"
+                >↑ {speed(t.rateUpload)}</span
+              ></small
+            ><ChevronRight size={16} /></button
+          >{:else}<p class="hint">No data is being transferred right now.</p>{/each}
       </div>
-      <button
-        class="text-button"
-        onclick={() => openSettings('Limits')}
-        aria-label="Open bandwidth settings"
-        ><Gauge size={13} /><span
-          >{client.session['alt-speed-enabled'] ? 'Slow mode' : 'Bandwidth'}</span
-        ></button
-      >
-    </footer>
+    {:else}
+      <header class="topbar">
+        <div class="heading-left">
+          <button
+            class="icon-button mobile-menu"
+            aria-label="Open navigation"
+            onclick={() => (sidebar = true)}><Menu size={18} /></button
+          >
+          <h1>{activeTitle}</h1>
+          <span class="count-badge">{client.visible.length}</span>
+        </div>
+        <div class="topbar-actions">
+          <div class="search-box">
+            <Search size={14} /><input
+              bind:this={queryInput!}
+              aria-label="Search transfers"
+              placeholder="Search"
+              bind:value={client.query}
+            />{#if client.query}<button
+                class="tiny-button"
+                aria-label="Clear search"
+                onclick={() => (client.query = '')}><X size={12} /></button
+              >{:else}<kbd>⌘ F</kbd>{/if}
+          </div>
+          <button
+            class="button primary add-button"
+            aria-label="Add torrent"
+            onclick={openAdd}
+            disabled={!client.online}><Plus size={15} /><span>Add torrent</span></button
+          >
+        </div>
+      </header>
+      {#if client.error}<div class="connection-error" role="alert">
+          <CircleAlert size={15} /><span
+            >{client.error}{#if client.ready}
+              · Showing last received data{/if}</span
+          ><button class="text-button" onclick={() => client.poll(true)}>Retry</button><button
+            class="text-button"
+            onclick={() => openSettings()}>Connection settings</button
+          >
+        </div>{/if}
+      <div class="overview-toolbar">
+        <div class="overview-state">
+          <span class="live-dot" class:connected={client.online}></span>{client.online
+            ? `${client.torrents.filter((t) => t.rateDownload || t.rateUpload).length} active transfers`
+            : client.ready
+              ? 'Connection interrupted'
+              : 'Connecting to Transmission…'}
+        </div>
+        <div>
+          <button
+            class="icon-button"
+            aria-label="Toggle speed graph"
+            aria-pressed={chart}
+            onclick={() => (chart = !chart)}><Activity size={16} /></button
+          ><button
+            class="icon-button"
+            aria-label="Toggle inspector"
+            aria-pressed={inspector}
+            onclick={() => (inspector = !inspector)}><Info size={16} /></button
+          >
+        </div>
+      </div>
+      {#if chart}<div class="graph-wrap" transition:slide={{ duration: motion(180) }}>
+          <SpeedGraph samples={client.samples} />
+        </div>{/if}
+      <div class="list-toolbar">
+        {#if client.selected.length > 1}<span class="selection-count"
+            >{client.selected.length} selected</span
+          ><button
+            class="text-button"
+            onclick={() => run(anyRunning ? 'torrent-stop' : 'torrent-start')}
+            >{#if anyRunning}<Pause size={13} />Pause{:else}<Play size={13} />Resume{/if}</button
+          ><button class="text-button danger" onclick={requestRemove}
+            ><Trash2 size={13} />Remove</button
+          ><button class="text-button" onclick={() => (client.selected = [])}>Clear</button
+          >{:else}<span class="eyebrow">TRANSFERS</span>{/if}
+        {#if mobile}<button
+            class="mobile-filter"
+            aria-label="Filter transfers"
+            onclick={() => (filterSheet = true)}
+            ><ListFilter size={18} /><span>{client.filter === 'all' ? 'Filter' : activeTitle}</span
+            ></button
+          >{/if}
+        <div class="sort-control">
+          <ArrowUpDown size={12} /><select aria-label="Sort transfers" bind:value={client.sort}
+            ><option value="addedDate">Date added</option><option value="name">Name</option><option
+              value="rateDownload">Download speed</option
+            ><option value="percentDone">Progress</option><option value="sizeWhenDone">Size</option
+            ><option value="queuePosition">Queue order</option></select
+          ><button
+            class="tiny-button"
+            aria-label="Reverse sort direction"
+            onclick={() => (client.ascending = !client.ascending)}
+            ><ChevronDown
+              size={13}
+              style={`transform:rotate(${client.ascending ? 180 : 0}deg)`}
+            /></button
+          >
+        </div>
+      </div>
+      <div class="torrent-list" role="listbox" aria-label="Transfers" aria-multiselectable="true">
+        {#each client.visible as t (t.id)}<div
+            data-row={t.id}
+            animate:flip={{
+              duration: matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200,
+            }}
+          >
+            <TorrentRow
+              torrent={t}
+              selected={client.selected.includes(t.id)}
+              open={() => {
+                client.select(t);
+                inspector = true;
+              }}
+              menu={openMenu}
+            />
+          </div>{:else}<div class="empty-library">
+            {#if !client.ready}<span class="loading-ring"></span>
+              <h2>Connecting to Transmission</h2>
+              <p>
+                {client.error
+                  ? 'Open settings to check your connection.'
+                  : 'Your transfers will appear here.'}
+              </p>{:else if client.query}<Search size={28} />
+              <h2>No matching transfers</h2>
+              <p>Try a different name, label, or folder.</p>
+              <button class="button" onclick={() => (client.query = '')}>Clear search</button
+              >{:else if client.filter !== 'all'}<CheckCheck size={28} />
+              <h2>Nothing here</h2>
+              <p>No transfers in this view.</p>
+              <button class="text-button" onclick={() => (client.filter = 'all')}
+                >Show all transfers</button
+              >{:else}<ArrowDownToLine size={32} />
+              <h2>A little room for something new.</h2>
+              <p>Drop a torrent file, or add a magnet link.</p>
+              <button class="button primary" onclick={openAdd}><Plus size={15} />Add torrent</button
+              >{/if}
+          </div>{/each}
+      </div>
+      <footer class="statusbar">
+        <span
+          >{client.torrents.length} transfer{client.torrents.length === 1 ? '' : 's'}<span
+            class="statusbar-size"
+          >
+            · {bytes(client.torrents.reduce((n, t) => n + t.sizeWhenDone, 0))}</span
+          ></span
+        >
+        <div>
+          <span class="download"><ArrowDown size={12} />{speed(client.stats.downloadSpeed)}</span
+          ><span class="upload"><ArrowUp size={12} />{speed(client.stats.uploadSpeed)}</span>
+        </div>
+        <button
+          class="text-button"
+          onclick={() => openSettings('Limits')}
+          aria-label="Open bandwidth settings"
+          ><Gauge size={13} /><span
+            >{client.session['alt-speed-enabled'] ? 'Slow mode' : 'Bandwidth'}</span
+          ></button
+        >
+      </footer>
+    {/if}
   </main>
-  {#if inspector && client.focused}<Inspector
+  {#if inspector && client.focused && (!mobile || mobileSection === 'transfers')}<Inspector
+      {mobile}
       torrent={client.details?.id === client.focused.id
         ? { ...client.details, ...client.focused }
         : client.focused}
@@ -572,6 +656,45 @@
       }}
     />{/if}
 </div>
+
+{#if mobile}<div class="mobile-dock">
+    <nav class="mobile-tabbar" aria-label="Main navigation">
+      <button
+        aria-current={mobileSection === 'transfers' ? 'page' : undefined}
+        onclick={() => {
+          if (mobileSection === 'transfers') client.selected = [];
+          mobileSection = 'transfers';
+          context = null;
+        }}><Layers size={21} /><span>Transfers</span></button
+      >
+      <button
+        aria-current={mobileSection === 'activity' ? 'page' : undefined}
+        onclick={() => {
+          mobileSection = 'activity';
+          context = null;
+        }}><Activity size={21} /><span>Activity</span></button
+      >
+      <button
+        aria-current={mobileSection === 'settings' ? 'page' : undefined}
+        onclick={() => openSettings()}><Settings size={21} /><span>Settings</span></button
+      >
+    </nav>
+    <button class="mobile-add" aria-label="Add torrent" disabled={!client.online} onclick={openAdd}
+      ><Plus size={26} /></button
+    >
+  </div>{/if}
+{#if filterSheet}<Modal title="Show transfers" close={() => (filterSheet = false)}
+    ><nav class="mobile-filter-list" aria-label="Transfer filters">
+      {#each filters as f}<button
+          aria-pressed={client.filter === f.id}
+          onclick={() => {
+            client.filter = f.id;
+            client.selected = [];
+            filterSheet = false;
+          }}><f.icon size={19} /><span>{f.label}</span><small>{client.count(f.id)}</small></button
+        >{/each}
+    </nav></Modal
+  >{/if}
 
 {#if context}
   <button
@@ -776,220 +899,221 @@
       <button class="button primary">Set location</button>
     </form></Modal
   >{/if}
-{#if modal === 'settings'}<Modal title="Settings" close={() => (modal = null)} wide
-    ><div class="settings-tabs">
-      {#each ['Connection', 'Limits', 'Transfers', 'Network', 'Appearance'] as name}<button
-          class:active={settingsTab === name}
-          onclick={() => (settingsTab = name)}>{name}</button
-        >{/each}
-    </div>
-    {#if settingsTab === 'Connection'}<form
-        class="modal-form"
-        onsubmit={(e) => {
-          e.preventDefault();
-          void connect();
-        }}
+{#snippet settingsContent()}
+  <div class="settings-tabs">
+    {#each ['Connection', 'Limits', 'Transfers', 'Network', 'Appearance'] as name}<button
+        class:active={settingsTab === name}
+        onclick={() => (settingsTab = name)}>{name}</button
+      >{/each}
+  </div>
+  {#if settingsTab === 'Connection'}<form
+      class="modal-form"
+      onsubmit={(e) => {
+        e.preventDefault();
+        void connect();
+      }}
+    >
+      <label
+        >Transmission RPC URL<input
+          class="input mono"
+          type="url"
+          required
+          bind:value={endpoint}
+          placeholder="http://localhost:9091/transmission/rpc"
+        /></label
       >
-        <label
-          >Transmission RPC URL<input
-            class="input mono"
-            type="url"
-            required
-            bind:value={endpoint}
-            placeholder="http://localhost:9091/transmission/rpc"
+      <div class="two-fields">
+        <label>Username<input class="input" autocomplete="username" bind:value={username} /></label
+        ><label
+          >Password<input
+            class="input"
+            type="password"
+            autocomplete="current-password"
+            bind:value={password}
           /></label
         >
-        <div class="two-fields">
-          <label
-            >Username<input class="input" autocomplete="username" bind:value={username} /></label
-          ><label
-            >Password<input
-              class="input"
-              type="password"
-              autocomplete="current-password"
-              bind:value={password}
-            /></label
-          >
-        </div>
-        <p class="hint">
-          The address is saved on this device. Credentials stay in memory. Remote servers must
-          permit your origin through CORS or a same-origin proxy.
-        </p>
-        <div class="server-version">
-          <span class="status-dot" class:success={client.online}></span>Transmission {client.session
-            .version || '—'}<span>RPC {client.session['rpc-version'] || '—'}</span>
-        </div>
-        <button class="button primary" disabled={saving}
-          >{saving ? 'Connecting…' : 'Connect'}</button
-        >
-      </form>
-    {:else if settingsTab === 'Appearance'}<div class="modal-form">
-        <label
-          >Color theme<select class="input" bind:value={theme}
-            ><option value="system">Follow system</option><option value="light">Light</option
-            ><option value="dark">Dark</option></select
-          ></label
-        >
-        <h3>Keyboard shortcuts</h3>
-        <dl class="shortcuts">
-          <div>
-            <dt>Search</dt>
-            <dd>⌘ / Ctrl F</dd>
-          </div>
-          <div>
-            <dt>Add torrent</dt>
-            <dd>⌘ / Ctrl O</dd>
-          </div>
-          <div>
-            <dt>Select all</dt>
-            <dd>⌘ / Ctrl A</dd>
-          </div>
-          <div>
-            <dt>Navigate transfers</dt>
-            <dd>↑ / ↓</dd>
-          </div>
-          <div>
-            <dt>Inspect</dt>
-            <dd>Enter</dd>
-          </div>
-          <div>
-            <dt>Remove</dt>
-            <dd>Delete</dd>
-          </div>
-          <div>
-            <dt>Close / clear selection</dt>
-            <dd>Escape</dd>
-          </div>
-        </dl>
-        <p class="hint">Drift 0.1 · Static, self-hosted, and private by default.</p>
       </div>
-    {:else}<form
-        class="modal-form settings-form"
-        onsubmit={(e) => {
-          e.preventDefault();
-          void saveSession();
-        }}
+      <p class="hint">
+        The address is saved on this device. Credentials stay in memory. Remote servers must permit
+        your origin through CORS or a same-origin proxy.
+      </p>
+      <div class="server-version">
+        <span class="status-dot" class:success={client.online}></span>Transmission {client.session
+          .version || '—'}<span>RPC {client.session['rpc-version'] || '—'}</span>
+      </div>
+      <button class="button primary" disabled={saving}>{saving ? 'Connecting…' : 'Connect'}</button>
+    </form>
+  {:else if settingsTab === 'Appearance'}<div class="modal-form">
+      <label
+        >Color theme<select class="input" bind:value={theme}
+          ><option value="system">Follow system</option><option value="light">Light</option><option
+            value="dark">Dark</option
+          ></select
+        ></label
       >
-        {#if settingsTab === 'Limits'}
-          {#if client.fullSpeedAvailable}<p class="hint">
-              This server adjusts bandwidth automatically. Use Full speed on a download to bypass
-              its automatic limits.
-            </p>{/if}
-          {#each [{ check: 'speed-limit-down-enabled', key: 'speed-limit-down', title: 'Limit download', unit: 'KB/s' }, { check: 'speed-limit-up-enabled', key: 'speed-limit-up', title: 'Limit upload', unit: 'KB/s' }, { check: 'download-queue-enabled', key: 'download-queue-size', title: 'Download queue', unit: 'active' }, { check: 'seed-queue-enabled', key: 'seed-queue-size', title: 'Seeding queue', unit: 'active' }, { check: 'seedRatioLimited', key: 'seedRatioLimit', title: 'Seed ratio limit', unit: 'ratio' }, { check: 'idle-seeding-limit-enabled', key: 'idle-seeding-limit', title: 'Stop idle seeding', unit: 'minutes' }] as field}<label
-              class="check-row"
-              ><input type="checkbox" bind:checked={sessionDraft[field.check]} />{field.title}<span
-                class="number-unit"
-                ><input
-                  aria-label={field.title}
-                  type="number"
-                  min="0"
-                  step="any"
-                  bind:value={sessionDraft[field.key]}
-                />{field.unit}</span
-              ></label
-            >{/each}
-          <h3>Slow mode</h3>
-          <label class="check-row"
-            ><input type="checkbox" bind:checked={sessionDraft['alt-speed-enabled']} />Enable
-            alternative speed limits</label
-          ><label class="field-row"
-            >Download (KB/s)<input
-              type="number"
-              min="0"
-              bind:value={sessionDraft['alt-speed-down']}
-            /></label
-          ><label class="field-row"
-            >Upload (KB/s)<input
-              type="number"
-              min="0"
-              bind:value={sessionDraft['alt-speed-up']}
-            /></label
-          >
-        {:else if settingsTab === 'Transfers'}<label
-            >Download directory<input
-              class="input mono"
-              bind:value={sessionDraft['download-dir']}
-            /></label
-          ><label class="check-row"
-            ><input type="checkbox" bind:checked={sessionDraft['incomplete-dir-enabled']} />Use a
-            temporary directory</label
-          ><label
-            >Temporary directory<input
-              class="input mono"
-              bind:value={sessionDraft['incomplete-dir']}
-            /></label
-          ><label class="check-row"
-            ><input type="checkbox" bind:checked={sessionDraft['rename-partial-files']} />Append
-            .part to incomplete files</label
-          ><label class="check-row"
-            ><input type="checkbox" bind:checked={sessionDraft['start-added-torrents']} />Start new
-            torrents automatically</label
-          >
-        {:else if settingsTab === 'Network'}<label class="field-row"
-            >Peer port<input
-              type="number"
-              min="1"
-              max="65535"
-              bind:value={sessionDraft['peer-port']}
-            /></label
-          ><button
-            type="button"
-            class="text-button"
-            onclick={async () => {
-              try {
-                const r = await client.rpc.call('port-test');
-                client.toast(
-                  r['port-is-open']
-                    ? 'Peer port is reachable'
-                    : 'Peer port is closed. Outgoing connections can still work.',
-                );
-              } catch (e) {
-                client.toast(String(e));
-              }
-            }}>Test incoming port <ExternalLink size={12} /></button
-          ><label class="field-row"
-            >Global peer limit<input
-              type="number"
-              min="1"
-              bind:value={sessionDraft['peer-limit-global']}
-            /></label
-          ><label class="field-row"
-            >Peers per torrent<input
-              type="number"
-              min="1"
-              bind:value={sessionDraft['peer-limit-per-torrent']}
-            /></label
-          ><label class="field-row"
-            >Encryption<select bind:value={sessionDraft.encryption}
-              ><option value="tolerated">Allow unencrypted</option><option value="preferred"
-                >Prefer encrypted</option
-              ><option value="required">Require encrypted</option></select
+      <h3>Keyboard shortcuts</h3>
+      <dl class="shortcuts">
+        <div>
+          <dt>Search</dt>
+          <dd>⌘ / Ctrl F</dd>
+        </div>
+        <div>
+          <dt>Add torrent</dt>
+          <dd>⌘ / Ctrl O</dd>
+        </div>
+        <div>
+          <dt>Select all</dt>
+          <dd>⌘ / Ctrl A</dd>
+        </div>
+        <div>
+          <dt>Navigate transfers</dt>
+          <dd>↑ / ↓</dd>
+        </div>
+        <div>
+          <dt>Inspect</dt>
+          <dd>Enter</dd>
+        </div>
+        <div>
+          <dt>Remove</dt>
+          <dd>Delete</dd>
+        </div>
+        <div>
+          <dt>Close / clear selection</dt>
+          <dd>Escape</dd>
+        </div>
+      </dl>
+      <p class="hint">Drift 0.1 · Static, self-hosted, and private by default.</p>
+    </div>
+  {:else}<form
+      class="modal-form settings-form"
+      onsubmit={(e) => {
+        e.preventDefault();
+        void saveSession();
+      }}
+    >
+      {#if settingsTab === 'Limits'}
+        {#if client.fullSpeedAvailable}<p class="hint">
+            This server adjusts bandwidth automatically. Use Full speed on a download to bypass its
+            automatic limits.
+          </p>{/if}
+        {#each [{ check: 'speed-limit-down-enabled', key: 'speed-limit-down', title: 'Limit download', unit: 'KB/s' }, { check: 'speed-limit-up-enabled', key: 'speed-limit-up', title: 'Limit upload', unit: 'KB/s' }, { check: 'download-queue-enabled', key: 'download-queue-size', title: 'Download queue', unit: 'active' }, { check: 'seed-queue-enabled', key: 'seed-queue-size', title: 'Seeding queue', unit: 'active' }, { check: 'seedRatioLimited', key: 'seedRatioLimit', title: 'Seed ratio limit', unit: 'ratio' }, { check: 'idle-seeding-limit-enabled', key: 'idle-seeding-limit', title: 'Stop idle seeding', unit: 'minutes' }] as field}<label
+            class="check-row"
+            ><input type="checkbox" bind:checked={sessionDraft[field.check]} />{field.title}<span
+              class="number-unit"
+              ><input
+                aria-label={field.title}
+                type="number"
+                min="0"
+                step="any"
+                bind:value={sessionDraft[field.key]}
+              />{field.unit}</span
             ></label
-          >{#each [['port-forwarding-enabled', 'Automatic port forwarding'], ['dht-enabled', 'Distributed hash table (DHT)'], ['pex-enabled', 'Peer exchange (PEX)'], ['lpd-enabled', 'Local peer discovery'], ['utp-enabled', 'µTP transport'], ['blocklist-enabled', 'Peer blocklist']] as field}<label
-              class="check-row"
-              ><input type="checkbox" bind:checked={sessionDraft[field[0]]} />{field[1]}</label
-            >{/each}<label
-            >Blocklist URL<input
-              class="input mono"
-              type="url"
-              bind:value={sessionDraft['blocklist-url']}
-            /></label
-          ><button
-            type="button"
-            class="text-button"
-            onclick={async () => {
-              try {
-                const r = await client.rpc.call('blocklist-update');
-                client.toast(`Blocklist updated: ${r['blocklist-size']} entries`);
-              } catch (e) {
-                client.toast(String(e));
-              }
-            }}><RefreshCw size={12} />Update blocklist</button
-          >{/if}
-        <button class="button primary" disabled={saving || !client.online}
-          >{saving ? 'Saving…' : 'Save changes'}</button
+          >{/each}
+        <h3>Slow mode</h3>
+        <label class="check-row"
+          ><input type="checkbox" bind:checked={sessionDraft['alt-speed-enabled']} />Enable
+          alternative speed limits</label
+        ><label class="field-row"
+          >Download (KB/s)<input
+            type="number"
+            min="0"
+            bind:value={sessionDraft['alt-speed-down']}
+          /></label
+        ><label class="field-row"
+          >Upload (KB/s)<input
+            type="number"
+            min="0"
+            bind:value={sessionDraft['alt-speed-up']}
+          /></label
         >
-      </form>{/if}</Modal
+      {:else if settingsTab === 'Transfers'}<label
+          >Download directory<input
+            class="input mono"
+            bind:value={sessionDraft['download-dir']}
+          /></label
+        ><label class="check-row"
+          ><input type="checkbox" bind:checked={sessionDraft['incomplete-dir-enabled']} />Use a
+          temporary directory</label
+        ><label
+          >Temporary directory<input
+            class="input mono"
+            bind:value={sessionDraft['incomplete-dir']}
+          /></label
+        ><label class="check-row"
+          ><input type="checkbox" bind:checked={sessionDraft['rename-partial-files']} />Append .part
+          to incomplete files</label
+        ><label class="check-row"
+          ><input type="checkbox" bind:checked={sessionDraft['start-added-torrents']} />Start new
+          torrents automatically</label
+        >
+      {:else if settingsTab === 'Network'}<label class="field-row"
+          >Peer port<input
+            type="number"
+            min="1"
+            max="65535"
+            bind:value={sessionDraft['peer-port']}
+          /></label
+        ><button
+          type="button"
+          class="text-button"
+          onclick={async () => {
+            try {
+              const r = await client.rpc.call('port-test');
+              client.toast(
+                r['port-is-open']
+                  ? 'Peer port is reachable'
+                  : 'Peer port is closed. Outgoing connections can still work.',
+              );
+            } catch (e) {
+              client.toast(String(e));
+            }
+          }}>Test incoming port <ExternalLink size={12} /></button
+        ><label class="field-row"
+          >Global peer limit<input
+            type="number"
+            min="1"
+            bind:value={sessionDraft['peer-limit-global']}
+          /></label
+        ><label class="field-row"
+          >Peers per torrent<input
+            type="number"
+            min="1"
+            bind:value={sessionDraft['peer-limit-per-torrent']}
+          /></label
+        ><label class="field-row"
+          >Encryption<select bind:value={sessionDraft.encryption}
+            ><option value="tolerated">Allow unencrypted</option><option value="preferred"
+              >Prefer encrypted</option
+            ><option value="required">Require encrypted</option></select
+          ></label
+        >{#each [['port-forwarding-enabled', 'Automatic port forwarding'], ['dht-enabled', 'Distributed hash table (DHT)'], ['pex-enabled', 'Peer exchange (PEX)'], ['lpd-enabled', 'Local peer discovery'], ['utp-enabled', 'µTP transport'], ['blocklist-enabled', 'Peer blocklist']] as field}<label
+            class="check-row"
+            ><input type="checkbox" bind:checked={sessionDraft[field[0]]} />{field[1]}</label
+          >{/each}<label
+          >Blocklist URL<input
+            class="input mono"
+            type="url"
+            bind:value={sessionDraft['blocklist-url']}
+          /></label
+        ><button
+          type="button"
+          class="text-button"
+          onclick={async () => {
+            try {
+              const r = await client.rpc.call('blocklist-update');
+              client.toast(`Blocklist updated: ${r['blocklist-size']} entries`);
+            } catch (e) {
+              client.toast(String(e));
+            }
+          }}><RefreshCw size={12} />Update blocklist</button
+        >{/if}
+      <button class="button primary" disabled={saving || !client.online}
+        >{saving ? 'Saving…' : 'Save changes'}</button
+      >
+    </form>{/if}
+{/snippet}
+{#if modal === 'settings'}<Modal title="Settings" close={() => (modal = null)} wide
+    >{@render settingsContent()}</Modal
   >{/if}
 {#if dragging}<div class="drag-overlay" transition:fade={{ duration: motion(100) }}>
     <div>
@@ -1009,3 +1133,18 @@
       onclick={() => (client.notice = '')}><X size={13} /></button
     >
   </div>{/if}
+
+{#if client.copyValue !== null}<Modal title="Copy text" close={() => (client.copyValue = null)}>
+    <div class="modal-form">
+      <p class="hint">
+        Your browser blocked automatic copying. Select the text and press ⌘C or Ctrl+C.
+      </p>
+      <textarea
+        class="input mono manual-copy"
+        aria-label="Text to copy"
+        rows="5"
+        readonly
+        value={client.copyValue}
+        onfocus={(e) => e.currentTarget.select()}></textarea>
+    </div>
+  </Modal>{/if}

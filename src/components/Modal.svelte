@@ -1,25 +1,54 @@
 <script lang="ts">
   import { motion } from '../lib/motion';
   import { onMount, type Snippet } from 'svelte';
-  import { fly } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
   import { X } from '@lucide/svelte';
   let {
     title,
     close,
     children,
     wide = false,
-  }: { title: string; close: () => void; children: Snippet; wide?: boolean } = $props();
+  }: {
+    title: string;
+    close: () => void;
+    children: Snippet;
+    wide?: boolean;
+  } = $props();
   let dialog: HTMLDialogElement;
+  let prior: HTMLElement | null = null;
+  const titleId = $props.id();
   onMount(() => {
-    const prior = document.activeElement as HTMLElement;
+    prior = document.activeElement as HTMLElement;
     dialog.showModal();
-    return () => prior?.focus();
   });
+  function enter(node: HTMLDialogElement) {
+    delete node.dataset.closing;
+    return animation();
+  }
+  function exit(node: HTMLDialogElement) {
+    node.dataset.closing = 'true';
+    return animation();
+  }
+  function animation() {
+    return {
+      duration: motion(160),
+      easing: cubicOut,
+      css: (t: number) => `opacity:${t};transform:translateY(${(1 - t) * 8}px);`,
+    };
+  }
+  function finished() {
+    dialog.close();
+    if (prior?.isConnected) prior.focus({ preventScroll: true });
+  }
 </script>
 
 <dialog
   bind:this={dialog!}
   class:wide
+  aria-labelledby={titleId}
+  in:enter|global
+  out:exit|global
+  onoutroend={finished}
   oncancel={(e) => {
     e.preventDefault();
     close();
@@ -28,13 +57,13 @@
     if (e.target === dialog) close();
   }}
   onkeydown={(e) => {
-    if (e.key === 'Escape') close();
+    if (e.key === 'Escape') e.stopPropagation();
   }}
 >
-  <div class="modal-body" transition:fly={{ y: 8, duration: motion(160) }}>
+  <div class="modal-body">
     <header class="modal-header">
-      <h2>{title}</h2>
-      <button class="icon-button" aria-label="Close dialog" onclick={close}><X size={17} /></button>
+      <h2 id={titleId}>{title}</h2>
+      <button class="icon-button" aria-label="Close dialog" onclick={close}><X size={18} /></button>
     </header>
     {@render children()}
   </div>

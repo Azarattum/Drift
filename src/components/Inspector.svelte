@@ -22,7 +22,31 @@
   import type { Torrent } from '../lib/types';
   import PeerGraph from './PeerGraph.svelte';
   import Modal from './Modal.svelte';
-  let { torrent: t, close }: { torrent: Torrent; close: () => void } = $props();
+  let {
+    torrent: t,
+    close,
+    mobile = false,
+  }: { torrent: Torrent; close: () => void; mobile?: boolean } = $props();
+  function panelIn(node: HTMLElement) {
+    delete node.dataset.closing;
+    for (const key of ['position', 'width', 'height', 'top', 'right', 'bottom'])
+      node.style.removeProperty(key);
+    return fly(node, { x: mobile ? 36 : 16, duration: motion(180) });
+  }
+  function panelOut(node: HTMLElement) {
+    const rect = node.getBoundingClientRect();
+    node.dataset.closing = 'true';
+    Object.assign(node.style, {
+      position: 'fixed',
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
+      top: `${rect.top}px`,
+      right: '0',
+      bottom: 'auto',
+      zIndex: '30',
+    });
+    return fly(node, { x: mobile ? 36 : 16, duration: motion(180) });
+  }
   let tab = $state('Overview');
   let collapsed = $state(new Set<string>());
   let fileQuery = $state('');
@@ -30,6 +54,7 @@
   let renameValue = $state('');
   let trackerText = $state<string | null>(null);
   let trackerEditing = $state(false);
+  let expandedTrackers = $state(new Set<number>());
   let saving = $state(false);
   let options = $state<Record<string, any>>({});
   let optionsId = $state(-1);
@@ -77,12 +102,7 @@
     return !checked(n) && n.ids.some((i) => t.fileStats?.[i]?.wanted ?? true);
   }
   async function copy(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      client.toast('Copied');
-    } catch {
-      client.toast('Clipboard unavailable on this connection. Select and copy the text.');
-    }
+    await client.copy(text);
   }
   async function saveTrackers() {
     saving = true;
@@ -109,8 +129,10 @@
 
 <aside
   class="inspector"
+  class:mobile
   aria-label="Torrent inspector"
-  transition:fly={{ x: 16, duration: motion(180) }}
+  in:panelIn|global
+  out:panelOut|global
 >
   <header class="inspector-header">
     <span class="eyebrow">INSPECTOR</span>
@@ -286,7 +308,7 @@
               aria-expanded={n.children.length ? !collapsed.has(n.path) : undefined}
               aria-level={n.depth + 1}
               class="file-node"
-              style={`padding-left:${n.depth * 14 + 3}px`}
+              style={`padding-left:${n.depth * 14 + 3}px;--depth:${n.depth}`}
             >
               {#if n.children.length}<button
                   class="tiny-button"
@@ -318,7 +340,10 @@
                     rename = n;
                     renameValue = n.name;
                   }
-                }}>{n.name}</button
+                }}
+                >{n.name}<small class="mobile-file-info"
+                  >{bytes(n.length)} · {percent(n.length ? n.completed / n.length : 1)}</small
+                ></button
               ><span class="file-size muted">{bytes(n.length)}</span><select
                 class="file-priority"
                 aria-label={`Priority for ${n.path}`}
@@ -335,7 +360,7 @@
                         ? 'priority-low'
                         : 'priority-normal']: n.ids,
                   })}
-                ><option value="-1">Low</option><option value="0">Normal</option><option value="1"
+                ><option value={-1}>Low</option><option value={0}>Normal</option><option value={1}
                   >High</option
                 ></select
               ><span class="file-percent muted"
@@ -386,29 +411,58 @@
           }}>Edit trackers</button
         >
       </div>
-      {#each t.trackerStats || [] as tracker (tracker.id)}<article class="tracker">
-          <div>
-            <span class="status-dot" class:success={tracker.lastAnnounceSucceeded}></span><b
-              title={tracker.announce}>{tracker.host || tracker.announce}</b
-            ><small>Tier {tracker.tier + 1}</small>
-          </div>
-          <p class:danger={tracker.lastAnnounceTime > 0 && !tracker.lastAnnounceSucceeded}>
-            {tracker.announceState === 3
-              ? 'Announcing…'
-              : tracker.lastAnnounceTime === 0
-                ? 'Not announced yet'
-                : tracker.lastAnnounceResult || 'Success'}
-          </p>
-          <footer>
-            <span
-              >{tracker.seederCount >= 0 ? `${tracker.seederCount} seeds` : 'Seeds unknown'}</span
-            ><span>{tracker.lastAnnouncePeerCount || 0} peers received</span><span
-              >{tracker.nextAnnounceTime > 0
-                ? `Next ${duration(tracker.nextAnnounceTime - Date.now() / 1000)}`
-                : ''}</span
+      {#each t.trackerStats || [] as tracker (tracker.id)}
+        {@const failed = tracker.lastAnnounceTime > 0 && !tracker.lastAnnounceSucceeded}
+        {@const expanded = expandedTrackers.has(tracker.id)}
+        <article class="tracker">
+          <button
+            class="tracker-heading"
+            aria-label={`Details for ${tracker.host || tracker.announce}`}
+            aria-expanded={expanded}
+            onclick={() => {
+              const next = new Set(expandedTrackers);
+              if (expanded) next.delete(tracker.id);
+              else next.add(tracker.id);
+              expandedTrackers = next;
+            }}
+          >
+            <span class="status-dot" class:success={tracker.lastAnnounceSucceeded} class:failed
+            ></span>
+            <strong title={tracker.announce}>{tracker.host || tracker.announce}</strong>
+            <ChevronDown
+              size={15}
+              class="muted"
+              style={`transform:rotate(${expanded ? 180 : 0}deg)`}
+            />
+          </button>
+          <div class="tracker-summary">
+            <span class:danger={failed}
+              >{tracker.announceState === 3
+                ? 'Announcing…'
+                : failed
+                  ? tracker.lastAnnounceResult
+                  : tracker.lastAnnounceTime === 0
+                    ? 'Waiting to announce'
+                    : `${tracker.seederCount >= 0 ? `${tracker.seederCount} seeds` : 'Seeds unknown'} · ${tracker.lastAnnouncePeerCount || 0} peers`}</span
             >
-          </footer>
-        </article>{:else}<div class="panel-empty">
+            {#if tracker.nextAnnounceTime > 0}<span class="next-announce"
+                >{duration(tracker.nextAnnounceTime - Date.now() / 1000)}</span
+              >{/if}
+          </div>
+          {#if expanded}<div class="tracker-extra">
+              <code>{tracker.announce}</code>
+              <div>
+                <span>Tier {tracker.tier + 1}</span><span
+                  >{tracker.leecherCount >= 0
+                    ? `${tracker.leecherCount} leechers`
+                    : 'Leechers unknown'}</span
+                >
+              </div>
+              <div><span>Last announce</span><span>{date(tracker.lastAnnounceTime)}</span></div>
+              <div><span>Next announce</span><span>{date(tracker.nextAnnounceTime)}</span></div>
+            </div>{/if}
+        </article>
+      {:else}<div class="panel-empty">
           <ExternalLink size={24} /><b>No trackers</b><span
             >{t.isPrivate
               ? 'Add a tracker for this private torrent.'

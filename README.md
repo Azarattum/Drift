@@ -6,9 +6,10 @@ A quiet, compact web client for Transmission. Built for desktop, comfortable on 
 
 - Compact, searchable transfer list with filters, sorting, keyboard navigation, range selection, batch actions, and desktop context menus. Touch devices always expose an action menu.
 - Explicit stages: peer discovery, metadata retrieval, verification, queueing, missing pieces, downloading, and seeding. Unknown metadata is never shown as a zero-byte download.
-- Scrubbable download/upload graph using measured samples only. Samples begin when the page opens; background tabs poll less frequently.
+- Download/upload history built with [LayerChart](https://layerchart.com), using measured samples, time axes, adaptive speed units, and interactive tooltips. Samples begin when the page opens; background tabs poll less frequently.
+- Mobile bottom navigation for Transfers, Activity, and Settings, with a separate reachable Add button, safe-area spacing, and touch targets of at least 44 × 44 CSS pixels.
 - Inspector with a selectable file tree, folder-wide download selection, file priority and renaming, tracker editing, peer graph and table, statistics, labels, and transfer options.
-- Magnets, torrent URLs, multi-file upload, drag and drop, file relocation, verification, reannouncing, queue ordering, and magnet/hash copying.
+- Magnets, torrent URLs, multi-file upload, drag and drop, file relocation, verification, reannouncing, queue ordering, and magnet/hash copying. Copying works on HTTP LAN pages; browsers that block it offer selectable text.
 - Server bandwidth, slow mode, directories, queue, seeding, encryption, discovery, peer, port-mapping, and blocklist settings.
 - Optional **Full speed** extension, detected at runtime. Unsupported controls stay hidden on standard daemons.
 - Light/dark/system themes, reduced motion, keyboard focus, native modal focus containment, and bundled fonts.
@@ -22,14 +23,14 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-Svelte 5 runes, Tailwind CSS 4, Lucide, and Inter Variable. Vite compiles Svelte; Bun manages packages and runs scripts. Biome checks TypeScript/CSS, svelte-check checks Svelte, types, and accessibility, and Prettier formats the project.
+Svelte 5 runes, Tailwind CSS 4, LayerChart 2, D3 scales, Lucide, and Inter Variable. Vite compiles Svelte; Bun manages packages and runs scripts. Biome checks TypeScript/CSS, svelte-check checks Svelte, types, and accessibility, and Prettier formats the project.
 
 ```sh
 bun run check
 bun run lint
 bun run format
 bun run test
-bunx playwright install chromium
+bunx playwright install chromium webkit
 bun run test:e2e
 bun run build
 bun run validate
@@ -90,9 +91,9 @@ The helper derives the bind address from UCI; DRIFT_RPC_URL can override the end
 
 ## Design and license
 
-Flat surfaces, a restrained hierarchy, contextual controls, and explicit state. Keyed FLIP movement, interpolated inspector layout, short overlay motion, and functional scroll fades. No decorative gradients or private design-library dependencies.
+Flat surfaces, a restrained hierarchy, contextual controls, and explicit state. Readable typography with a 12px minimum for annotations, keyed FLIP movement, stable inspector exits, short overlay motion, and functional scroll fades. No decorative gradients or private design-library dependencies.
 
-MIT. Inter: SIL Open Font License. Lucide: ISC. Dependency licenses are included in their packages.
+MIT. Inter: SIL Open Font License. Lucide and D3: ISC. LayerChart: MIT. Third-party notices are included in public/licenses and the compiled bundle.
 
 An opt-in live smoke check is available after deployment:
 

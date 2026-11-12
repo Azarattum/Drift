@@ -104,6 +104,7 @@ test('file tree checkboxes send the complete folder selection; peers include a r
   await page.getByTestId('torrent-row').first().click();
   await page.getByRole('tab', { name: 'Files', exact: true }).click();
   await expect(page.getByRole('tree')).toBeVisible();
+  await expect(page.getByRole('combobox', { name: /^Priority for / }).first()).toHaveValue('0');
   await page.getByRole('checkbox', { name: 'Download Ubuntu 24.04', exact: true }).check();
   await expect
     .poll(() =>
@@ -139,7 +140,10 @@ test('standard daemons never advertise an unsupported Full speed button', async 
 test('mobile navigation, inspector, file tree, and modal fit the viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await server(page);
-  await expect(page.getByRole('button', { name: 'Open navigation' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
+  await expect(
+    page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button'),
+  ).toHaveCount(3);
   await page.screenshot({ path: 'test-results/drift-mobile.png', fullPage: true });
   await page.getByTestId('torrent-row').first().click();
   await expect(page.getByRole('complementary', { name: 'Torrent inspector' })).toBeVisible();
@@ -197,4 +201,306 @@ test('a connection failure keeps existing data visible and explains its freshnes
     timeout: 15000,
   });
   await expect(page.getByTestId('torrent-row')).toHaveCount(6);
+});
+
+test('clipboard copying works over HTTP without the secure clipboard API', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+    (window as any).__copies = [];
+    document.addEventListener('copy', (e) => {
+      e.preventDefault();
+      (window as any).__copies.push(
+        (document.activeElement as HTMLTextAreaElement)?.value || getSelection()?.toString(),
+      );
+    });
+  });
+  await server(page);
+  await page.getByTestId('torrent-row').first().click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Copy info hash' }).click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__copies.at(-1)))
+    .toBe('a'.repeat(40));
+  await expect(page.getByRole('status')).toHaveText(/Copied/);
+  await page.getByTestId('torrent-row').first().click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Copy magnet link' }).click();
+  const copied = await page.evaluate(() => (window as any).__copies.at(-1));
+  expect(new URL(copied).searchParams.get('xt')).toBe(`urn:btih:${'a'.repeat(40)}`);
+});
+
+test('blocked copying offers selectable text instead of a dead-end toast', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+    document.execCommand = () => false;
+  });
+  await server(page);
+  await page.getByTestId('torrent-row').first().click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Copy info hash' }).click();
+  await expect(page.getByRole('dialog', { name: 'Copy text' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Text to copy' })).toHaveValue('a'.repeat(40));
+});
+
+test('dialog exit keeps its frame intact and restores focus', async ({ page }) => {
+  await server(page);
+  const add = page.getByRole('button', { name: 'Add torrent', exact: true });
+  // Exercise a keyboard invocation; Safari does not focus buttons on pointer clicks.
+  await add.focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'Add a transfer' });
+  await expect(dialog).toBeVisible();
+  await page.waitForTimeout(200);
+  const before = await dialog.boundingBox();
+  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  const frame = await page.evaluate(() => {
+    const dialog = document.querySelector('dialog')!;
+    const animations = dialog.getAnimations();
+    for (const animation of animations) animation.pause();
+    const rect = dialog.getBoundingClientRect();
+    return {
+      width: rect.width,
+      height: rect.height,
+      bodyTransform: getComputedStyle(dialog.querySelector('.modal-body')!).transform,
+      open: dialog.open,
+    };
+  });
+  expect(frame.height).toBeGreaterThan(before!.height * 0.95);
+  expect(frame.width).toBeGreaterThan(before!.width * 0.95);
+  expect(frame.bodyTransform).toBe('none');
+  expect(frame.open).toBe(true);
+  await page.evaluate(() => {
+    for (const a of document.querySelector('dialog')!.getAnimations()) a.finish();
+  });
+  await expect(page.locator('dialog')).toHaveCount(0);
+  await expect(add).toBeFocused();
+  await add.click();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('dialog')).toHaveCount(0);
+});
+
+async function smallTargets(page: Page) {
+  return page.evaluate(() =>
+    [
+      ...document.querySelectorAll<HTMLElement>(
+        'button,a[href],input,textarea,select,[role="button"],[role="slider"]',
+      ),
+    ]
+      .filter((el) => {
+        const r = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        return (
+          r.width > 0 &&
+          r.height > 0 &&
+          r.right > 0 &&
+          r.left < innerWidth &&
+          r.bottom > 0 &&
+          r.top < innerHeight &&
+          style.visibility !== 'hidden' &&
+          style.display !== 'none' &&
+          !el.closest('[inert]')
+        );
+      })
+      .filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width < 43.9 || r.height < 43.9;
+      })
+      .map((el) => ({
+        name: el.getAttribute('aria-label') || el.textContent?.trim().slice(0, 60),
+        tag: el.tagName,
+        width: el.getBoundingClientRect().width,
+        height: el.getBoundingClientRect().height,
+      })),
+  );
+}
+
+test('mobile navigation is thumb reachable and every visible control has a 44px target', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await server(page);
+  expect(await smallTargets(page)).toEqual([]);
+  const nav = page.getByRole('navigation', { name: 'Main navigation' });
+  const navBox = await nav.boundingBox();
+  expect(navBox!.y).toBeGreaterThan(700);
+  const addBox = await page.getByRole('button', { name: 'Add torrent', exact: true }).boundingBox();
+  expect(addBox!.y).toBeGreaterThan(700);
+  await nav.getByRole('button', { name: 'Activity', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Activity', exact: true })).toBeVisible();
+  expect(await smallTargets(page)).toEqual([]);
+  await page.screenshot({ path: 'test-results/drift-mobile-activity.png', fullPage: true });
+  await nav.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+  expect(await smallTargets(page)).toEqual([]);
+  await page.locator('.settings-tabs').getByRole('button', { name: 'Limits', exact: true }).click();
+  await page.getByRole('spinbutton', { name: 'Limit download', exact: true }).fill('123');
+  await nav.getByRole('button', { name: 'Activity', exact: true }).click();
+  await nav.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('spinbutton', { name: 'Limit download', exact: true })).toHaveValue(
+    '123',
+  );
+  await nav.getByRole('button', { name: 'Transfers', exact: true }).click();
+  await page.getByTestId('torrent-row').first().click();
+  await page.getByRole('tab', { name: 'Files', exact: true }).click();
+  expect(await smallTargets(page)).toEqual([]);
+  await page.getByRole('tab', { name: /^Peers/ }).click();
+  expect(await smallTargets(page)).toEqual([]);
+  await nav.getByRole('button', { name: 'Transfers', exact: true }).click();
+  await expect(page.locator('.inspector')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add torrent', exact: true }).click();
+  expect(await smallTargets(page)).toEqual([]);
+});
+
+test('mobile inspector stays fixed while exiting instead of entering the content grid', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await server(page);
+  await page.getByTestId('torrent-row').first().click();
+  await page.waitForTimeout(220);
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  const frame = await page.evaluate(() => {
+    const panel = document.querySelector<HTMLElement>('.inspector')!;
+    for (const a of panel.getAnimations()) a.pause();
+    const r = panel.getBoundingClientRect();
+    return {
+      position: getComputedStyle(panel).position,
+      width: r.width,
+      height: r.height,
+      top: r.top,
+      left: r.left,
+    };
+  });
+  expect(frame.position).toBe('fixed');
+  expect(frame.width).toBeCloseTo(390, 0);
+  expect(frame.height).toBeCloseTo(844, 0);
+  expect(Math.abs(frame.top)).toBeLessThan(1);
+  await page.evaluate(() => {
+    for (const a of document.querySelector('.inspector')!.getAnimations()) a.finish();
+  });
+  await expect(page.locator('.inspector')).toHaveCount(0);
+});
+
+test('tracker composition uses readable type and progressive disclosure', async ({ page }) => {
+  await server(page);
+  await page.getByTestId('torrent-row').first().click();
+  await page.getByRole('tab', { name: 'Trackers', exact: true }).click();
+  await expect(page.locator('.tracker-extra')).toHaveCount(0);
+  await page.locator('.tracker-heading').first().click();
+  await expect(page.locator('.tracker-extra')).toContainText('tracker.example.org/announce');
+  const tiny = await page.evaluate(() => {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const result: any[] = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const parent = node.parentElement;
+      if (!parent || !node.textContent?.trim() || parent.closest('script,style')) continue;
+      const r = document.createRange();
+      r.selectNodeContents(node);
+      const b = r.getBoundingClientRect();
+      const style = getComputedStyle(parent);
+      if (
+        b.width > 0.1 &&
+        b.height > 0.1 &&
+        b.right > 0 &&
+        b.left < innerWidth &&
+        b.bottom > 0 &&
+        b.top < innerHeight &&
+        style.visibility !== 'hidden' &&
+        Number.parseFloat(style.fontSize) < 12
+      )
+        result.push({ text: node.textContent, size: style.fontSize });
+    }
+    return result;
+  });
+  expect(tiny).toEqual([]);
+  await page.screenshot({ path: 'test-results/drift-trackers-readable.png', fullPage: true });
+});
+
+test('speed history uses measured samples, readable time ticks, and correctly scaled tooltips', async ({
+  page,
+}) => {
+  await page.clock.install();
+  const { calls } = await server(page);
+  for (let i = 0; i < 20; i++) {
+    const before = calls.filter((c) => c.method === 'session-stats').length;
+    await page.clock.fastForward(6000);
+    await expect
+      .poll(() => calls.filter((c) => c.method === 'session-stats').length)
+      .toBeGreaterThan(before);
+  }
+  await page.clock.resume();
+  await expect(page.getByText('Collecting live history')).toHaveCount(0);
+  const plot = page.getByRole('slider', { name: 'Inspect transfer speed history' });
+  await expect(plot).toHaveAttribute('aria-valuemax', '20');
+  await plot.focus();
+  const latest = await plot.getAttribute('aria-valuenow');
+  await page.keyboard.press('ArrowLeft');
+  await expect(plot).toHaveAttribute('aria-valuenow', String(Number(latest) - 1));
+  await page.keyboard.press('Escape');
+  await expect(plot).toHaveAttribute('aria-valuenow', latest!);
+  const bounds = await plot.boundingBox();
+  await page.mouse.move(bounds!.x + bounds!.width - 25, bounds!.y + 75);
+  await expect(page.locator('.lc-tooltip-container')).toContainText('Download');
+  await expect(page.locator('.lc-tooltip-container')).toContainText('MB/s');
+  await expect(page.locator('.lc-tooltip-container')).toContainText('625 KB/s');
+  await page.screenshot({ path: 'test-results/drift-speed-history.png', fullPage: true });
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page
+    .getByRole('navigation', { name: 'Main navigation' })
+    .getByRole('button', { name: 'Activity', exact: true })
+    .click();
+  await page.waitForTimeout(200);
+  const timeLabels = await page
+    .locator('.chart-plot .lc-axis[data-placement="bottom"] .lc-axis-tick-label')
+    .evaluateAll((elements) =>
+      elements
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return { left: r.left, right: r.right };
+        })
+        .sort((a, b) => a.left - b.left),
+    );
+  expect(timeLabels.length).toBeGreaterThan(1);
+  for (let i = 1; i < timeLabels.length; i++)
+    expect(timeLabels[i].left - timeLabels[i - 1].right).toBeGreaterThanOrEqual(8);
+  await page.screenshot({ path: 'test-results/drift-mobile-activity.png', fullPage: true });
+});
+
+test('small phones keep file, tracker, options, and settings controls at 44px without overflow', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 740 });
+  await server(page);
+  const audit = async () => {
+    expect(await smallTargets(page)).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+  };
+  await page.getByTestId('torrent-row').first().click();
+  for (const name of ['Overview', 'Files', 'Peers', 'Trackers', 'Options']) {
+    await page.getByRole('tab', { name: new RegExp(`^${name}`) }).click();
+    await audit();
+    await page.locator('.inspector-scroll').evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    await audit();
+    await page.locator('.inspector-scroll').evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    if (name === 'Files')
+      await page.screenshot({ path: 'test-results/drift-mobile-files.png', fullPage: true });
+  }
+  await page
+    .getByRole('navigation', { name: 'Main navigation' })
+    .getByRole('button', { name: 'Settings', exact: true })
+    .click();
+  for (const name of ['Connection', 'Appearance', 'Limits', 'Transfers', 'Network']) {
+    await page.locator('.settings-tabs').getByRole('button', { name, exact: true }).click();
+    await audit();
+    await page.locator('.mobile-page-scroll').evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    await audit();
+    await page.locator('.mobile-page-scroll').evaluate((el) => {
+      el.scrollTop = 0;
+    });
+  }
 });
