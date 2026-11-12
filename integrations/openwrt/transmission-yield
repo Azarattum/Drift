@@ -24,7 +24,7 @@ read_traffic() {
 }
 
 apply_mode() {
-    if [ "$1" = idle ]; then
+    if [ "${priority_active:-0}" -gt 0 ] || [ "$1" = idle ]; then
         transmission-remote "$rpc" -D -U >/dev/null 2>&1 || return 1
     else
         transmission-remote "$rpc" -d "$down" -u "$up" >/dev/null 2>&1 || return 1
@@ -54,11 +54,14 @@ while :; do
     wait $!
     # A selected torrent bypasses session limits; ordinary downloads still yield.
     # Reconcile on the router so closing the browser never strands an override.
-    if /usr/bin/ucode /usr/libexec/transmission-priority.uc >/dev/null 2>&1; then
+    if priority_active=$(/usr/bin/ucode /usr/libexec/transmission-priority.uc 2>/dev/null); then
         priority_error=0
-    elif [ "$priority_error" = 0 ]; then
-        logger -t transmission-yield 'Full speed controller failed; will retry'
-        priority_error=1
+    else
+        priority_active=0
+        if [ "$priority_error" = 0 ]; then
+            logger -t transmission-yield 'Full speed controller failed; will retry'
+            priority_error=1
+        fi
     fi
     read_cpu
     delta_total=$((total - previous_total))

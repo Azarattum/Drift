@@ -71,6 +71,8 @@ let state = previous ? json(previous) : { version: 1, torrents: {}, session: nul
 if (state.version != 1 || type(state.torrents) != 'object')
     die('Invalid saved priority settings; refusing to overwrite them');
 
+if (type(state.yielded) != 'object') state.yielded = {};
+
 function save() {
     let content = sprintf('%J\n', state);
     if (content == previous) return;
@@ -89,6 +91,22 @@ let torrents = rpc('torrent-get', { fields: fields }).torrents;
 let current = {};
 for (let torrent in torrents) current[torrent.hashString] = torrent;
 
+// Restore ordinary torrents before promoting one or ending a boost.
+let requestedBoost = false;
+for (let torrent in torrents)
+    if (index(torrent.labels || [], LABEL) >= 0 && torrent.status != 0 && torrent.percentDone < 1 && !torrent.error)
+        requestedBoost = true;
+for (let hash, saved in state.yielded) {
+    let torrent = current[hash];
+    if (requestedBoost && torrent && index(torrent.labels || [], LABEL) < 0) continue;
+    if (torrent) {
+        rpc('torrent-set', { ids: [ torrent.id ], ...saved });
+        for (let key, value in saved) torrent[key] = value;
+    }
+    delete state.yielded[hash];
+    save();
+}
+
 // Restore an override when the user clears it, pauses, completes, or removes it.
 for (let hash, saved in state.torrents) {
     let torrent = current[hash];
@@ -100,11 +118,6 @@ for (let hash, saved in state.torrents) {
         let restore = { ids: [ torrent.id ], ...saved.settings,
             labels: filter(torrent.labels || [], label => label != LABEL) };
         rpc('torrent-set', restore);
-        // Clear force-start's queue bypass while preserving a deliberate pause.
-        if (torrent.status == 3 || torrent.status == 4) {
-            rpc('torrent-stop', { ids: [ torrent.id ] });
-            rpc('torrent-start', { ids: [ torrent.id ] });
-        }
         torrent.labels = restore.labels;
     }
     delete state.torrents[hash];
@@ -127,11 +140,14 @@ for (let torrent in torrents) {
         state.torrents[torrent.hashString] = { settings: settings };
         if (!state.session) {
             let session = rpc('session-get', {});
-            state.session = { 'peer-limit-global': session['peer-limit-global'] };
+            state.session = {};
+            for (let key in [ 'peer-limit-global', 'speed-limit-down-enabled', 'speed-limit-down',
+                'speed-limit-up-enabled', 'speed-limit-up', 'alt-speed-enabled' ])
+                state.session[key] = session[key];
         }
         save();
     }
-    // Per-torrent bypass works even while the governor caps other downloads.
+    // Remove per-torrent limits; the global bandwidth parent is lifted below.
     let settings = { honorsSessionLimits: false, downloadLimited: false,
         uploadLimited: false, bandwidthPriority: 1, 'peer-limit': 200 };
     let changed = fresh;
@@ -144,10 +160,37 @@ for (let torrent in torrents) {
 
 let active = length(keys(state.torrents));
 if (active) {
+    let busy = index(fs.readfile('/var/run/transmission-yield.status') || '', 'mode=idle') < 0;
+    let down = int(trim(command('uci -q get transmission_yield.main.busy_download_kbytes || echo 128')));
+    let up = int(trim(command('uci -q get transmission_yield.main.busy_upload_kbytes || echo 32')));
+    let downloading = length(filter(torrents, t => index(t.labels || [], LABEL) < 0 && t.status == 4));
+    let transferring = length(filter(torrents, t => index(t.labels || [], LABEL) < 0 && (t.status == 4 || t.status == 6)));
+    down = max(1, int(down / max(1, downloading)));
+    up = max(1, int(up / max(1, transferring)));
+    for (let torrent in torrents) {
+        if (index(torrent.labels || [], LABEL) >= 0) continue;
+        if (!state.yielded[torrent.hashString]) {
+            let saved = {};
+            for (let key in [ 'downloadLimited', 'downloadLimit', 'uploadLimited', 'uploadLimit' ])
+                saved[key] = torrent[key];
+            state.yielded[torrent.hashString] = saved;
+            save();
+        }
+        let saved = state.yielded[torrent.hashString];
+        let wanted = busy ? {
+            downloadLimited: true, downloadLimit: saved.downloadLimited ? min(saved.downloadLimit, down) : down,
+            uploadLimited: true, uploadLimit: saved.uploadLimited ? min(saved.uploadLimit, up) : up
+        } : saved;
+        let changed = false;
+        for (let key, value in wanted) if (torrent[key] != value) changed = true;
+        if (changed) rpc('torrent-set', { ids: [ torrent.id ], ...wanted });
+    }
     let session = rpc('session-get', {});
     let peers = max(200, state.session['peer-limit-global']);
-    if (session['peer-limit-global'] != peers)
-        rpc('session-set', { 'peer-limit-global': peers });
+    if (session['peer-limit-global'] != peers || session['speed-limit-down-enabled'] ||
+        session['speed-limit-up-enabled'] || session['alt-speed-enabled'])
+        rpc('session-set', { 'peer-limit-global': peers, 'speed-limit-down-enabled': false,
+            'speed-limit-up-enabled': false, 'alt-speed-enabled': false });
     setNice(0);
 } else if (state.session) {
     rpc('session-set', state.session);

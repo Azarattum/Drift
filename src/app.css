@@ -693,7 +693,10 @@ input[role='switch']:checked::after {
   opacity: 0.65;
 }
 .speed-chart .lc-highlight-point {
-  --stroke-color: var(--surface);
+  --stroke-color: var(--strong-border);
+}
+:root[data-theme='dark'] .speed-chart .lc-highlight-point {
+  --stroke-color: var(--muted);
 }
 .lc-tooltip-container {
   font-size: 13px;
@@ -2235,21 +2238,20 @@ dialog[data-closing='true']::backdrop {
 }
 @media (min-width: 901px) {
   .torrent-row {
-    grid-template-columns: 32px minmax(0, 1fr) auto auto;
+    grid-template-columns: 32px minmax(0, 1fr) auto;
   }
   .row-actions {
-    display: none;
-    position: static;
-    transform: none;
-    grid-column: 4;
-    grid-row: 1;
-  }
-  .torrent-row:hover .row-actions,
-  .torrent-row:focus-within .row-actions,
-  .torrent-row.menu-open .row-actions {
     display: flex;
+    position: absolute;
+    transform: translateY(-50%);
+  }
+  .torrent-row:hover .row-metrics,
+  .torrent-row:focus-within .row-metrics,
+  .torrent-row.menu-open .row-metrics {
+    visibility: hidden;
   }
 }
+
 .sort-label {
   font-size: 13px;
   color: var(--secondary);

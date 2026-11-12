@@ -1431,13 +1431,12 @@ test('global settings save switches, selections, and completed text edits with f
   await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toHaveCount(0);
 });
 
-test('hover actions never overlap transfer speeds or ETA', async ({ page }) => {
+test('hover actions hide metrics without moving them', async ({ page }) => {
   await server(page);
   const row = page.getByTestId('torrent-row').first();
+  const metrics = row.locator('.row-metrics');
+  const before = await metrics.boundingBox();
   await row.hover();
-  const actions = (await row.locator('.row-actions').boundingBox())!;
-  for (const metric of [row.locator('.row-speeds'), row.locator('.row-eta')]) {
-    const box = (await metric.boundingBox())!;
-    expect(box.x + box.width).toBeLessThanOrEqual(actions.x);
-  }
+  await expect(metrics).toHaveCSS('visibility', 'hidden');
+  expect(await metrics.boundingBox()).toEqual(before);
 });
