@@ -231,6 +231,41 @@
       canvas?.querySelector<HTMLElement>('media-fullscreen-button')?.click();
     }
   }
+  function fitPlayer(node: HTMLElement) {
+    const dialog = node.closest('dialog')!;
+    const body = dialog.querySelector<HTMLElement>('.modal-body')!;
+    let frame = 0;
+    function update() {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (node.classList.contains('watch-fullscreen')) return;
+        const media = node.querySelector('video');
+        if (!media) return;
+        const style = getComputedStyle(dialog);
+        const maximum = parseFloat(style.maxHeight);
+        const other = body.getBoundingClientRect().height - media.getBoundingClientRect().height;
+        const border = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+        if (Number.isFinite(maximum))
+          node.style.setProperty(
+            '--watch-video-height',
+            `${Math.max(0, Math.floor(maximum - other - border) - 1)}px`,
+          );
+      });
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(body);
+    window.addEventListener('resize', update);
+    window.visualViewport?.addEventListener('resize', update);
+    update();
+    return {
+      destroy() {
+        cancelAnimationFrame(frame);
+        observer.disconnect();
+        window.removeEventListener('resize', update);
+        window.visualViewport?.removeEventListener('resize', update);
+      },
+    };
+  }
   onMount(() => {
     const signal = controller.signal;
     void (async () => {
@@ -341,7 +376,12 @@
     </div>
   {:else if phase === 'ready'}
     <video-player class="drift-player">
-      <media-container bind:this={canvas} class="watch-canvas" aria-label="Video player">
+      <media-container
+        bind:this={canvas}
+        use:fitPlayer
+        class="watch-canvas"
+        aria-label="Video player"
+      >
         <!-- Captions are exposed when the media provides text tracks. RPC text is never HTML. -->
         <!-- svelte-ignore a11y_media_has_caption -->
         <video

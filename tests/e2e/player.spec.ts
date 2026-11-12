@@ -227,3 +227,27 @@ test('video hover action opens the player without selecting the torrent', async 
   await expect(page.locator('.player-dialog')).toBeVisible();
   await expect(page.locator('.inspector')).toHaveCount(0);
 });
+
+test('player fits available dialog height without scrolling at short viewport sizes', async ({
+  page,
+}) => {
+  await setup(page);
+  await expect(page.locator('.drift-player video')).toBeVisible();
+  for (const viewport of [
+    { width: 1120, height: 896 },
+    { width: 1440, height: 800 },
+    { width: 900, height: 500 },
+    { width: 375, height: 667 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect
+      .poll(() =>
+        page
+          .locator('.player-dialog')
+          .evaluate((dialog) => dialog.scrollHeight - dialog.clientHeight),
+      )
+      .toBeLessThanOrEqual(1);
+    const controls = await page.locator('.watch-controls').boundingBox();
+    expect(controls!.y + controls!.height).toBeLessThanOrEqual(viewport.height);
+  }
+});

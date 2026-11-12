@@ -3768,7 +3768,7 @@ dialog.player-dialog {
   display: block;
   width: 100%;
   aspect-ratio: 16 / 9;
-  max-height: 65vh;
+  max-height: min(65vh, var(--watch-video-height, 65vh));
   object-fit: contain;
   background: #090a0c;
 }
@@ -4194,7 +4194,7 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
     min-height: 260px;
   }
   .watch-canvas video {
-    max-height: 52vh;
+    max-height: min(52vh, var(--watch-video-height, 52vh));
   }
   .watch-controls {
     padding: 0 6px 4px;
@@ -4350,4 +4350,14 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   .watch-header-status .watch-download {
     max-width: 110px;
   }
+}
+
+.watch-download {
+  line-height: 20px;
+}
+.watch-download > svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
