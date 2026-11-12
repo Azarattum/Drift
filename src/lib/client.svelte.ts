@@ -1,6 +1,7 @@
 import { copyText } from './clipboard';
 import { requestDeadline } from './deadline';
-import { preference } from './preferences';
+import { historySamples, mergeSamples } from './history';
+import { preference, savePreference } from './preferences';
 import { Transmission } from './rpc';
 import { stage } from './stage';
 import type { Capabilities, Filter, Sample, Torrent } from './types';
@@ -74,14 +75,22 @@ export class Client {
   selected = $state<number[]>([]);
   samples = $state<Sample[]>([]);
   capabilities = $state<Capabilities | null>(null);
+  historyOnServer = $state(false);
+  private historyProbe = 0;
+  private historySaved = 0;
+  private historyEndpoint = '';
   online = $state(false);
   ready = $state(false);
   error = $state('');
+  startupFailed = $state(false);
+  private consecutiveFailures = 0;
+  private startupAt = Date.now();
   notice = $state('');
   copyValue = $state<string | null>(null);
   busy = $state(new Set<number>());
   filter = $state<Filter>('all');
   query = $state('');
+  labelFilter = $state<string | null>(null);
   sort = $state('addedDate');
   ascending = $state(false);
   private polling = false;
@@ -101,6 +110,7 @@ export class Client {
       .filter(
         (t) =>
           this.matches(t, this.filter) &&
+          (!this.labelFilter || (t.labels || []).includes(this.labelFilter)) &&
           `${t.name} ${t.downloadDir} ${(t.labels || []).join(' ')}`
             .toLowerCase()
             .includes(this.query.toLowerCase()),
@@ -157,11 +167,14 @@ export class Client {
       this.online = true;
       this.ready = true;
       this.error = '';
+      this.consecutiveFailures = 0;
+      this.startupFailed = false;
       if (now - this.lastSample >= 1500) {
-        this.samples = [
-          ...this.samples,
-          { at: now, down: stats.downloadSpeed, up: stats.uploadSpeed },
-        ].slice(-150);
+        this.samples = mergeSamples(
+          this.samples,
+          [{ at: now, down: stats.downloadSpeed, up: stats.uploadSpeed }],
+          now,
+        );
         this.lastSample = now;
       }
       if (force || now - this.lastSession > 15000) {
@@ -175,8 +188,11 @@ export class Client {
         await this.loadDetails(this.focused.id);
       if (!this.focused) this.details = null;
       await this.loadCapabilities();
+      await this.loadHistory();
     } catch (e) {
       this.online = false;
+      this.consecutiveFailures++;
+      this.startupFailed = this.consecutiveFailures >= 3 || Date.now() - this.startupAt > 5000;
       this.error = e instanceof Error ? e.message : 'Connection interrupted';
     } finally {
       this.polling = false;
@@ -217,6 +233,55 @@ export class Client {
     } finally {
       deadline.dispose();
     }
+  }
+  saveHistory() {
+    if (!this.samples.length) return;
+    savePreference(
+      `drift.history.${this.rpc.endpoint}`,
+      JSON.stringify({ version: 1, samples: this.samples.map((s) => [s.at, s.down, s.up]) }),
+    );
+    this.historySaved = Date.now();
+  }
+  resetHistory() {
+    this.samples = [];
+    this.historyEndpoint = '';
+    this.historyProbe = 0;
+    this.historySaved = 0;
+    this.historyOnServer = false;
+    this.lastSample = 0;
+  }
+  async loadHistory() {
+    const now = Date.now();
+    const key = `drift.history.${this.rpc.endpoint}`;
+    if (this.historyEndpoint !== this.rpc.endpoint) {
+      this.historyEndpoint = this.rpc.endpoint;
+      this.historyProbe = 0;
+      this.historyOnServer = false;
+      try {
+        this.samples = mergeSamples(
+          this.samples,
+          historySamples(JSON.parse(preference(key) || 'null'), now) || [],
+          now,
+        );
+      } catch {}
+    }
+    if (now - this.historyProbe < 30000) return;
+    this.historyProbe = now;
+    const deadline = requestDeadline(2000);
+    try {
+      const url = new URL('web/activity.json', new URL('.', this.rpc.endpoint));
+      const response = await fetch(url, { cache: 'no-store', signal: deadline.signal });
+      const value = response.ok ? await response.json() : null;
+      const samples = historySamples(value, now);
+      this.historyOnServer =
+        !!samples && typeof value.updated === 'number' && Math.abs(now / 1000 - value.updated) < 90;
+      if (samples) this.samples = mergeSamples(this.samples, samples, now);
+    } catch {
+      this.historyOnServer = false;
+    } finally {
+      deadline.dispose();
+    }
+    if (now - this.historySaved >= 30000) this.saveHistory();
   }
   select(t: Torrent, event?: MouseEvent) {
     if (event?.shiftKey && this.selected.length) {

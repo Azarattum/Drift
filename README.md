@@ -1,14 +1,15 @@
 # Drift
 
-A quiet, compact web client for Transmission. Built for desktop, comfortable on a phone. Static assets only: no Node process, database, CDN, analytics, or additional backend.
+A quiet, compact web client for Transmission. Built for desktop, comfortable on a phone. Ships as static assets. Optional router integrations add Full speed control and activity recording; the standard client needs no application server.
 
 ## Features
 
 - Compact, searchable transfer list with filters, sorting, keyboard navigation, range selection, batch actions, and desktop context menus. Touch devices always expose an action menu.
 - Explicit stages: peer discovery, metadata retrieval, verification, queueing, missing pieces, downloading, and seeding. Unknown metadata is never shown as a zero-byte download.
-- Download/upload history built with [LayerChart](https://layerchart.com), using measured samples, time axes, adaptive speed units, and interactive tooltips. Samples begin when the page opens; background tabs poll less frequently.
+- Download/upload history built with [LayerChart](https://layerchart.com), using measured samples, time axes, adaptive speed units, and interactive tooltips. Loads available server history or cached browser observations; background tabs poll less frequently.
 - Mobile bottom navigation for Transfers, Activity, and Settings, with a separate reachable Add button, safe-area spacing, and touch targets of at least 44 × 44 CSS pixels.
 - Inspector with a selectable file tree, folder-wide download selection, file priority and renaming, tracker editing, peer graph and table, statistics, labels, and transfer options.
+- Grouped settings with a desktop navigation column, a mobile section picker, custom switches and checkboxes, and persistent commit actions.
 - Magnets, torrent URLs, multi-file upload, drag and drop, file relocation, verification, reannouncing, queue ordering, and magnet/hash copying. Copying works on HTTP LAN pages; browsers that block it offer selectable text.
 - Server bandwidth, slow mode, directories, queue, seeding, encryption, discovery, peer, port-mapping, and blocklist settings.
 - Optional **Full speed** extension, detected at runtime. Unsupported controls stay hidden on standard daemons.
@@ -80,6 +81,22 @@ bun scripts/deploy.ts root@router.local /path/to/drift-dist
 ```
 
 Transmission 4.x is the primary target, tested live with 4.1.3. The client uses its legacy-compatible RPC API with 409 session negotiation. Older daemons may lack labels or tracker-list support; there is a legacy tracker-editing path. A future daemon that removes legacy RPC will need an adapter. Creating new torrent metainfo from local files is outside this remote client's scope.
+
+## Activity history
+
+Transmission's [RPC statistics](https://github.com/transmission/transmission/blob/4.0.5/docs/rpc-spec.md#42-session-statistics) provide current speeds and cumulative totals. They do not provide a timestamped speed history.
+
+Drift detects an optional `activity.json` file next to its frontend assets:
+
+```json
+{ "version": 1, "updated": 1790000000, "samples": [[1790000000000, 524288, 65536]] }
+```
+
+Each sample is `[Unix time in milliseconds, download bytes/second, upload bytes/second]`. `updated` uses Unix seconds. The frontend accepts one hour of validated samples, merges them with live observations, and leaves breaks across missing intervals. An inactive period has a compact summary instead of an arbitrary speed scale.
+
+The optional OpenWrt priority integration records aggregate torrent rates every ten seconds, reusing the existing RPC poll. It keeps a bounded working copy in RAM and publishes an atomic SSD snapshot every thirty seconds, so recording continues with every browser closed and survives reloads. It records no torrent names or peer addresses. The helper's existing mounted-SSD guard prevents writes to router flash. Activity before installation cannot be reconstructed.
+
+Without a server history feed, Drift caches observations from the current browser and labels the source accordingly. Browser observations cannot fill periods when no browser was connected.
 
 ## Optional Full speed protocol
 

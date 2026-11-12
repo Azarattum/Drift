@@ -11,6 +11,10 @@
     Play,
     RefreshCw,
     ShieldCheck,
+    Tag,
+    ArrowDown,
+    ArrowUp,
+    CheckCircle2,
     X,
     Zap,
   } from '@lucide/svelte';
@@ -29,7 +33,7 @@
   }: { torrent: Torrent; close: () => void; mobile?: boolean } = $props();
   function panelIn(node: HTMLElement) {
     delete node.dataset.closing;
-    for (const key of ['position', 'width', 'height', 'top', 'right', 'bottom'])
+    for (const key of ['position', 'width', 'height', 'top', 'right', 'bottom', 'left', 'z-index'])
       node.style.removeProperty(key);
     return fly(node, { x: mobile ? 36 : 16, duration: motion(180) });
   }
@@ -41,12 +45,14 @@
       width: `${rect.width}px`,
       height: `${rect.height}px`,
       top: `${rect.top}px`,
-      right: '0',
+      left: `${rect.left}px`,
+      right: 'auto',
       bottom: 'auto',
       zIndex: '30',
     });
     return fly(node, { x: mobile ? 36 : 16, duration: motion(180) });
   }
+  const optionsFormId = $props.id();
   let tab = $state('Overview');
   let collapsed = $state(new Set<string>());
   let fileQuery = $state('');
@@ -68,7 +74,7 @@
       n.path.toLowerCase().includes(fileQuery.toLowerCase()),
     ),
   );
-  let label = $derived(client.capabilities?.fullSpeed.label);
+  let label = $derived(client.capabilities?.fullSpeed.label || 'router:full-speed');
   $effect(() => {
     if (optionsId !== t.id) {
       options = {
@@ -153,7 +159,7 @@
     <span class="muted"
       >{t.metadataPercentComplete < 1
         ? 'File list not received yet'
-        : `${bytes(t.sizeWhenDone)} · ${t.files?.length || 0} file${t.files?.length === 1 ? '' : 's'}`}</span
+        : `${bytes(t.sizeWhenDone)} · ${t.files?.length || t.fileCount || 'Loading'} ${t.files || t.fileCount ? ((t.files?.length || t.fileCount) === 1 ? 'file' : 'files') : 'details…'}`}</span
     >
   </div>
   <div class="inspector-tabs" role="tablist" aria-label="Torrent details">
@@ -168,103 +174,146 @@
   </div>
   <div class="inspector-scroll" role="tabpanel" aria-label={tab}>
     {#if tab === 'Overview'}
-      <section class="stage-card" class:warning={s.tone === 'amber' || s.tone === 'red'}>
-        <div class="stage-title">
-          <span class="status-dot" class:pulse={s.active}></span><b>{s.label}</b
-          >{#if s.progress !== undefined}<span>{percent(s.progress)}</span>{/if}
+      <section
+        class="torrent-stage"
+        class:warning={s.tone === 'amber' || s.tone === 'red'}
+        class:complete={t.percentDone === 1}
+      >
+        <div class="stage-heading">
+          <span class="status-dot" class:pulse={s.active && !t.rateDownload && !t.rateUpload}
+          ></span>
+          <h3>{s.label}</h3>
+          {#if s.progress !== undefined && t.percentDone < 1}<b>{percent(s.progress)}</b>{/if}
         </div>
         <p>{t.errorString || s.detail}</p>
-        <div class="detail-progress" class:indeterminate={s.active && s.progress === undefined}>
-          <span style={`width:${(s.progress || 0) * 100}%`}></span>
-        </div>
+        {#if t.percentDone < 1}<div
+            class="detail-progress"
+            class:indeterminate={s.active && s.progress === undefined}
+          >
+            <span style={`width:${(s.progress || 0) * 100}%`}></span>
+          </div>{/if}
       </section>
-      {#if client.fullSpeedAvailable && t.percentDone < 1}<button
-          class="boost-card"
-          class:active={client.isFullSpeed(t)}
-          onclick={() => client.fullSpeed(t)}
-          ><Zap size={18} /><span
-            ><b
-              >{client.isFullSpeed(t)
-                ? client.fullSpeedApplied(t)
-                  ? 'Full speed active'
-                  : 'Requesting full speed…'
-                : 'Full speed'}</b
-            ><small
-              >{client.isFullSpeed(t)
-                ? 'Click to restore automatic limits'
-                : 'Bypass automatic backoff for this download'}</small
-            ></span
-          ><span class="toggle" class:on={client.isFullSpeed(t)}></span></button
-        >{/if}
-      <div class="metric-grid">
-        <div><span>Downloaded</span><b>{bytes(t.downloadedEver)}</b></div>
-        <div><span>Uploaded</span><b>{bytes(t.uploadedEver)}</b></div>
-        <div><span>Download</span><b class="download">{speed(t.rateDownload)}</b></div>
-        <div><span>Upload</span><b class="upload">{speed(t.rateUpload)}</b></div>
-        <div><span>Time remaining</span><b>{duration(t.eta)}</b></div>
-        <div>
-          <span>Share ratio</span><b>{t.uploadRatio < 0 ? '—' : t.uploadRatio.toFixed(2)}</b>
-        </div>
-      </div>
-      <div class="section-heading">
-        <h3>Connections</h3>
-        <button class="text-button" onclick={() => (tab = 'Peers')}
-          >View peers <ChevronRight size={12} /></button
-        >
-      </div>
-      <div class="connection-summary">
-        <span><i class="status-dot"></i>{t.peersConnected} connected</span><span
-          >{t.peersSendingToUs} sending to you</span
-        >
-      </div>
-      <div class="section-heading"><h3>Location</h3></div>
-      <p class="mono break-path">{t.downloadDir}</p>
-      <div class="section-heading">
-        <h3>Labels</h3>
+      <div class="torrent-primary-actions">
         <button
-          class="text-button"
+          class="button secondary"
+          onclick={() =>
+            client.safeAction(t.status === 0 ? 'torrent-start' : 'torrent-stop', [t.id])}
+          >{#if t.status === 0}<Play size={17} />Resume{:else}<Pause size={17} />Pause{/if}</button
+        >
+        {#if client.fullSpeedAvailable}<button
+            class="button full-speed-button"
+            class:enabled={client.isFullSpeed(t)}
+            disabled={t.percentDone === 1}
+            aria-pressed={client.isFullSpeed(t)}
+            onclick={() => client.fullSpeed(t)}
+            ><Zap size={17} />{client.isFullSpeed(t)
+              ? client.fullSpeedApplied(t)
+                ? 'Full speed on'
+                : 'Applying…'
+              : 'Full speed'}</button
+          >{/if}
+      </div>
+      {#if client.fullSpeedAvailable}<p class="action-caption">
+          {t.percentDone === 1
+            ? 'Full speed is available while downloading.'
+            : client.isFullSpeed(t)
+              ? 'Automatic bandwidth control is bypassed. Turn off Full speed to restore it.'
+              : 'Full speed bypasses automatic bandwidth control for this download.'}
+        </p>{/if}
+      <section class="detail-section">
+        <div class="section-heading">
+          <h3>Activity</h3>
+          <button class="button compact secondary" onclick={() => (tab = 'Peers')}
+            >Peers <span class="button-count">{t.peersConnected}</span><ChevronRight
+              size={15}
+            /></button
+          >
+        </div>
+        {#if t.rateDownload || t.rateUpload}<div class="speed-pair">
+            <span class="download"
+              ><ArrowDown size={18} /><b>{speed(t.rateDownload)}</b><small>Download</small></span
+            ><span class="upload"
+              ><ArrowUp size={18} /><b>{speed(t.rateUpload)}</b><small>Upload</small></span
+            >
+          </div>{:else}<p class="quiet-activity">
+            {t.status === 0
+              ? 'Transfer paused.'
+              : t.percentDone === 1
+                ? 'Waiting for other peers to request data.'
+                : s.detail}
+          </p>{/if}
+        <dl class="transfer-totals">
+          <div>
+            <dt>Downloaded</dt>
+            <dd>{bytes(t.downloadedEver)}</dd>
+          </div>
+          <div>
+            <dt>Uploaded</dt>
+            <dd>{bytes(t.uploadedEver)}</dd>
+          </div>
+          {#if t.eta >= 0 && t.percentDone < 1}<div>
+              <dt>Time remaining</dt>
+              <dd>{duration(t.eta)}</dd>
+            </div>{/if}
+        </dl>
+      </section>
+      {#if (t.labels || []).some((x) => x !== label)}<div class="label-chips">
+          {#each (t.labels || []).filter((x) => x !== label) as tag}<button
+              class="label-chip"
+              onclick={() => {
+                client.labelFilter = tag;
+                close();
+              }}><Tag size={14} />{tag}</button
+            >{/each}
+        </div>{/if}
+      <details class="detail-disclosure">
+        <summary>Torrent details <ChevronRight size={16} /></summary>
+        <dl class="properties">
+          <div>
+            <dt>Added</dt>
+            <dd>{date(t.addedDate)}</dd>
+          </div>
+          {#if t.doneDate}<div>
+              <dt>Completed</dt>
+              <dd>{date(t.doneDate)}</dd>
+            </div>{/if}
+          <div>
+            <dt>Share ratio</dt>
+            <dd>{t.uploadRatio >= 0 ? t.uploadRatio.toFixed(2) : 'No uploads yet'}</dd>
+          </div>
+          <div>
+            <dt>Privacy</dt>
+            <dd>{t.isPrivate ? 'Private torrent' : 'Public torrent'}</dd>
+          </div>
+          {#if t.creator}<div>
+              <dt>Created by</dt>
+              <dd>{t.creator}</dd>
+            </div>{/if}
+          <div>
+            <dt>Pieces</dt>
+            <dd>{t.pieceCount || 0} × {bytes(t.pieceSize)}</dd>
+          </div>
+        </dl>
+        {#if t.comment}<p class="comment">{t.comment}</p>{/if}
+        <div class="hash-line">
+          <code>{t.hashString}</code><button
+            class="icon-button"
+            aria-label="Copy torrent hash"
+            onclick={() => copy(t.hashString)}><Copy size={17} /></button
+          >
+        </div>
+      </details>
+      <details class="detail-disclosure">
+        <summary>Storage & labels <ChevronRight size={16} /></summary>
+        <p class="break-path mono">{t.downloadDir}</p>
+        <button
+          class="button secondary"
           onclick={() => {
             labelsText = (t.labels || []).filter((x) => x !== label).join(', ');
             labelEditing = true;
-          }}>Edit</button
+          }}><Tag size={16} />Manage labels</button
         >
-      </div>
-      <div class="labels">
-        {#each (t.labels || []).filter((x) => x !== label) as item}<span>{item}</span>{:else}<span
-            class="muted">No labels</span
-          >{/each}
-      </div>
-      <div class="section-heading"><h3>Information</h3></div>
-      <dl class="properties">
-        <div>
-          <dt>Added</dt>
-          <dd>{date(t.addedDate)}</dd>
-        </div>
-        <div>
-          <dt>Completed</dt>
-          <dd>{date(t.doneDate)}</dd>
-        </div>
-        <div>
-          <dt>Created by</dt>
-          <dd>{t.creator || '—'}</dd>
-        </div>
-        <div>
-          <dt>Pieces</dt>
-          <dd>{t.pieceCount || 0} × {bytes(t.pieceSize)}</dd>
-        </div>
-        <div>
-          <dt>Privacy</dt>
-          <dd>{t.isPrivate ? 'Private torrent' : 'Public torrent'}</dd>
-        </div>
-      </dl>
-      {#if t.comment}<p class="muted comment">{t.comment}</p>{/if}
-      <div class="hash-line">
-        <code>{t.hashString}</code><button
-          class="icon-button"
-          aria-label="Copy torrent hash"
-          onclick={() => copy(t.hashString)}><Copy size={13} /></button
-        >
-      </div>
+      </details>
     {:else if tab === 'Files'}
       {#if t.metadataPercentComplete < 1}<div class="panel-empty">
           <Folder size={25} /><b>Waiting for the file list</b><span>{s.detail}</span>
@@ -286,7 +335,7 @@
               ))}>Collapse</button
           >
         </div>
-        <p class="hint">Choose files to download. Folder selections include all children.</p>
+        <p class="file-hint">Choose files to download.</p>
         <div class="file-tree" role="tree" aria-label="Torrent files">
           {#each nodes as n (n.path)}<div
               role="treeitem"
@@ -328,23 +377,22 @@
                     [e.currentTarget.checked ? 'files-wanted' : 'files-unwanted']: n.ids,
                   })}
               />
-              {#if n.children.length}<Folder size={14} class="muted" />{:else}<File
-                  size={13}
-                  class="muted"
-                />{/if}<button
-                class="file-name"
-                title={n.path}
-                onclick={() => {
-                  if (n.children.length) toggleFolder(n.path);
-                  else {
-                    rename = n;
-                    renameValue = n.name;
-                  }
-                }}
-                >{n.name}<small class="mobile-file-info"
+              <div class="file-copy">
+                <button
+                  class="file-name"
+                  title={n.path}
+                  onclick={() => {
+                    if (n.children.length) toggleFolder(n.path);
+                    else {
+                      rename = n;
+                      renameValue = n.name;
+                    }
+                  }}>{n.name}</button
+                ><small class="file-meta"
                   >{bytes(n.length)} · {percent(n.length ? n.completed / n.length : 1)}</small
-                ></button
-              ><span class="file-size muted">{bytes(n.length)}</span><select
+                >
+              </div>
+              <select
                 class="file-priority"
                 aria-label={`Priority for ${n.path}`}
                 value={n.ids.every((i) => t.fileStats?.[i]?.priority === 1)
@@ -363,8 +411,6 @@
                 ><option value={-1}>Low</option><option value={0}>Normal</option><option value={1}
                   >High</option
                 ></select
-              ><span class="file-percent muted"
-                >{percent(n.length ? n.completed / n.length : 1)}</span
               >
             </div>{/each}
         </div>{/if}
@@ -376,7 +422,9 @@
       </div>
       <div class="table-scroll">
         <table class="peer-table">
-          <thead><tr><th>Peer / Client</th><th>Progress</th><th>↓</th><th>↑</th></tr></thead><tbody
+          <thead
+            ><tr><th>Peer / Client</th><th>Progress</th><th>Download</th><th>Upload</th></tr></thead
+          ><tbody
             >{#each t.peers || [] as p (p.address + ':' + p.port)}<tr
                 ><td
                   ><div class="peer-address">
@@ -387,9 +435,9 @@
                       ? ' · Incoming'
                       : ''}</small
                   ></td
-                ><td>{percent(p.progress)}</td><td class="download"
-                  >{p.rateToClient ? speed(p.rateToClient) : '—'}</td
-                ><td class="upload">{p.rateToPeer ? speed(p.rateToPeer) : '—'}</td></tr
+                ><td>{percent(p.progress)}</td><td class="download">{speed(p.rateToClient)}</td><td
+                  class="upload">{speed(p.rateToPeer)}</td
+                ></tr
               >{:else}<tr><td colspan="4" class="empty-cell">{s.detail}</td></tr>{/each}</tbody
           >
         </table>
@@ -471,6 +519,7 @@
         </div>{/each}
     {:else if tab === 'Options'}
       <form
+        id={optionsFormId}
         class="options-form"
         onsubmit={async (e) => {
           e.preventDefault();
@@ -483,74 +532,104 @@
           }
         }}
       >
-        <h3>Bandwidth</h3>
-        <label class="check-row"
-          ><input type="checkbox" bind:checked={options.honorsSessionLimits} />Follow global speed
-          limits</label
-        ><label class="check-row"
-          ><input type="checkbox" bind:checked={options.downloadLimited} />Limit download
-          <span class="number-unit"
-            ><input
-              aria-label="Download limit in KB/s"
+        <section class="settings-group">
+          <h3>Bandwidth</h3>
+          <div class="settings-card">
+            <label class="setting-row"
+              ><span class="setting-copy"
+                ><b>Use global speed limits</b><small>Follow the server's bandwidth settings.</small
+                ></span
+              ><input
+                type="checkbox"
+                role="switch"
+                bind:checked={options.honorsSessionLimits}
+              /></label
+            >
+            {#each [{ key: 'downloadLimited', value: 'downloadLimit', title: 'Download limit', aria: 'Download limit in KB/s' }, { key: 'uploadLimited', value: 'uploadLimit', title: 'Upload limit', aria: 'Upload limit in KB/s' }] as f}<label
+                class="setting-row"
+                ><span class="setting-copy"><b>{f.title}</b></span><input
+                  role="switch"
+                  type="checkbox"
+                  bind:checked={options[f.key]}
+                /></label
+              >{#if options[f.key]}<label class="setting-row"
+                  ><span>Maximum speed</span><span class="number-unit"
+                    ><input
+                      type="number"
+                      min="0"
+                      aria-label={f.aria}
+                      bind:value={options[f.value]}
+                    />KB/s</span
+                  ></label
+                >{/if}{/each}
+            <label class="setting-row"
+              ><span class="setting-copy"
+                ><b>Bandwidth priority</b><small>Priority relative to other torrents.</small></span
+              ><select bind:value={options.bandwidthPriority}
+                ><option value={-1}>Low</option><option value={0}>Normal</option><option value={1}
+                  >High</option
+                ></select
+              ></label
+            >
+          </div>
+        </section>
+        <section class="settings-group">
+          <h3>Seeding</h3>
+          <div class="settings-card">
+            <label class="setting-row"
+              ><span>Share ratio</span><select bind:value={options.seedRatioMode}
+                ><option value={0}>Global setting</option><option value={1}>Custom limit</option
+                ><option value={2}>Unlimited</option></select
+              ></label
+            >
+            {#if options.seedRatioMode === 1}<label class="setting-row"
+                ><span>Target ratio</span><input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  aria-label="Ratio limit"
+                  bind:value={options.seedRatioLimit}
+                /></label
+              >{/if}
+            <label class="setting-row"
+              ><span>Inactive seeds</span><select bind:value={options.seedIdleMode}
+                ><option value={0}>Global setting</option><option value={1}>Custom timeout</option
+                ><option value={2}>Unlimited</option></select
+              ></label
+            >
+            {#if options.seedIdleMode === 1}<label class="setting-row"
+                ><span>Idle time</span><span class="number-unit"
+                  ><input
+                    type="number"
+                    min="1"
+                    aria-label="Idle minutes"
+                    bind:value={options.seedIdleLimit}
+                  />min</span
+                ></label
+              >{/if}
+          </div>
+        </section>
+        <details class="detail-disclosure">
+          <summary>Advanced <ChevronRight size={16} /></summary><label class="setting-row"
+            ><span>Peer limit</span><input
               type="number"
-              min="0"
-              bind:value={options.downloadLimit}
-            /> KB/s</span
-          ></label
-        ><label class="check-row"
-          ><input type="checkbox" bind:checked={options.uploadLimited} />Limit upload
-          <span class="number-unit"
-            ><input
-              aria-label="Upload limit in KB/s"
-              type="number"
-              min="0"
-              bind:value={options.uploadLimit}
-            /> KB/s</span
-          ></label
-        >
-        <label class="field-row"
-          >Bandwidth priority<select bind:value={options.bandwidthPriority}
-            ><option value={-1}>Low</option><option value={0}>Normal</option><option value={1}
-              >High</option
-            ></select
-          ></label
-        ><label class="field-row"
-          >Peer limit<input
-            type="number"
-            min="1"
-            max="5000"
-            bind:value={options['peer-limit']}
-          /></label
-        >
-        <h3>Seeding</h3>
-        <label class="field-row"
-          >Ratio limit<select bind:value={options.seedRatioMode}
-            ><option value={0}>Use global setting</option><option value={1}>Stop at ratio</option
-            ><option value={2}>Unlimited</option></select
-          ></label
-        >{#if Number(options.seedRatioMode) === 1}<label class="field-row"
-            >Target ratio<input
-              type="number"
-              min="0"
-              step=".1"
-              bind:value={options.seedRatioLimit}
+              min="1"
+              aria-label="Peer limit"
+              bind:value={options['peer-limit']}
             /></label
-          >{/if}<label class="field-row"
-          >Idle seeding<select bind:value={options.seedIdleMode}
-            ><option value={0}>Use global setting</option><option value={1}>Stop when idle</option
-            ><option value={2}>Unlimited</option></select
-          ></label
-        >{#if Number(options.seedIdleMode) === 1}<label class="field-row"
-            >Idle minutes<input type="number" min="1" bind:value={options.seedIdleLimit} /></label
-          >{/if}
-        {#if client.isFullSpeed(t)}<p class="hint">
-            Full speed owns bandwidth and peer limits until you turn it off.
-          </p>{/if}<button class="button primary" disabled={saving || client.isFullSpeed(t)}
-          >{saving ? 'Saving…' : 'Save changes'}</button
-        >
+          >
+        </details>
       </form>
     {/if}
   </div>
+  {#if tab === 'Options'}<footer class="inspector-commit">
+      <button
+        class="button primary"
+        type="submit"
+        form={optionsFormId}
+        disabled={saving || !client.online}>{saving ? 'Saving…' : 'Save changes'}</button
+      >
+    </footer>{/if}
 </aside>
 {#if rename}<Modal title="Rename file" close={() => (rename = null)}
     ><form

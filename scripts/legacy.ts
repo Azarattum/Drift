@@ -208,8 +208,8 @@ try {
   assert((await page.locator('.chart-legend').textContent())?.includes('MB/s'));
   await page.screenshot({ path: 'test-results/ios15.4-activity.png' });
   await page.locator('.mobile-tabbar button').nth(2).click();
-  await page.locator('.settings-tabs button').last().click();
-  await page.locator('select').selectOption('dark');
+  await page.locator('select[aria-label="Settings section"]').selectOption('Appearance');
+  await page.locator('select[aria-label="Color theme"]').selectOption('dark');
   assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
   await audit();
   assert.deepEqual(errors, [], 'No browser runtime errors');

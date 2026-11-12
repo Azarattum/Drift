@@ -58,7 +58,7 @@
     }
   }}
 >
-  <div class="torrent-icon">
+  <div class="torrent-icon" class:complete={t.percentDone === 1}>
     {#if t.metadataPercentComplete < 1}<LoaderCircle
         size={18}
         class="slow-spin"
@@ -80,9 +80,11 @@
           class:pulse={s.active && t.rateDownload === 0 && t.rateUpload === 0}
         ></span>{s.label}</span
       ><span class="size muted"
-        >{t.metadataPercentComplete < 1
-          ? 'Retrieving file list'
-          : `${bytes(t.sizeWhenDone)}${t.percentDone < 1 ? ` · ${percent(t.percentDone)}` : ''}`}</span
+        >{t.errorString || s.tone === 'amber' || s.tone === 'red'
+          ? t.errorString || s.detail
+          : t.metadataPercentComplete < 1
+            ? 'Retrieving file list'
+            : `${bytes(t.sizeWhenDone)}${t.percentDone < 1 ? ` · ${percent(t.percentDone)}` : ''}`}</span
       >{#if full}<span
           class="full-indicator"
           title={!client.fullSpeedAvailable
@@ -97,7 +99,11 @@
               : 'Applying…'}</span
         >{/if}
     </div>
-    <div class="row-progress" class:indeterminate={s.active && s.progress === undefined}>
+    <div
+      class="row-progress"
+      class:finished={t.percentDone === 1}
+      class:indeterminate={s.active && s.progress === undefined}
+    >
       <span
         style={`width:${Math.max(0, Math.min(100, (s.progress || 0) * 100))}%;background:${s.tone === 'green' ? 'var(--teal)' : s.tone === 'red' ? 'var(--red)' : 'var(--blue)'}`}
       ></span>
@@ -105,23 +111,18 @@
   </div>
   <div class="row-stage-detail muted" title={s.detail}>{t.errorString || s.detail}</div>
   <div class="row-speeds">
-    <span class:download={t.rateDownload > 0}
-      >{#if t.rateDownload > 0}<ArrowDown size={12} />{speed(t.rateDownload)}{:else}<span
-          class="muted">—</span
-        >{/if}</span
-    ><span class:upload={t.rateUpload > 0}
-      >{#if t.rateUpload > 0}<ArrowUp size={12} />{speed(t.rateUpload)}{:else}<span class="muted"
-          >—</span
-        >{/if}</span
+    {#if t.rateDownload > 0}<span class="download" title="Download speed"
+        ><ArrowDown size={16} />{speed(t.rateDownload)}</span
+      >{/if}
+    {#if t.rateUpload > 0}<span class="upload" title="Upload speed"
+        ><ArrowUp size={16} />{speed(t.rateUpload)}</span
+      >{/if}
+  </div>
+  {#if t.status === 4 && t.rateDownload > 0 && t.percentDone < 1 && t.eta >= 0}<div
+      class="row-eta muted"
     >
-  </div>
-  <div class="row-eta muted">
-    {t.status === 6
-      ? `↑ ${t.uploadRatio.toFixed(2)}`
-      : t.percentDone === 1
-        ? 'Complete'
-        : duration(t.eta)}
-  </div>
+      {duration(t.eta)} left
+    </div>{/if}
   <div class="row-actions">
     <button
       class="icon-button row-toggle"
@@ -142,7 +143,7 @@
         onclick={(e) => {
           e.stopPropagation();
           void client.fullSpeed(t);
-        }}><Zap size={15} /></button
+        }}><Zap size={16} /><span>Full speed</span></button
       >{/if}<button
       class="icon-button row-menu"
       aria-label={`Actions for ${t.name}`}

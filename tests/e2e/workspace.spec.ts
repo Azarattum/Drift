@@ -1,7 +1,12 @@
 import { expect, type Page, test } from '@playwright/test';
 import { fixtures } from '../fixtures';
 
-async function server(page: Page, features: boolean | 'stale' = true) {
+async function server(
+  page: Page,
+  features: boolean | 'stale' = true,
+  options: { startupFailures?: number; waitForReady?: boolean } = {},
+) {
+  let failures = options.startupFailures || 0;
   const torrents = fixtures();
   const calls: { method: string; arguments: any }[] = [];
   await page.route('**/full-speed.json*', (route) =>
@@ -23,6 +28,10 @@ async function server(page: Page, features: boolean | 'stale' = true) {
     }),
   );
   await page.route(/\/rpc$/, async (route) => {
+    if (failures-- > 0) {
+      await route.abort();
+      return;
+    }
     const req = route.request();
     if (req.headers()['x-transmission-session-id'] !== 'test-session') {
       await route.fulfill({
@@ -79,7 +88,7 @@ async function server(page: Page, features: boolean | 'stale' = true) {
   });
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'All transfers' })).toBeVisible();
-  await expect(page.getByTestId('torrent-row')).toHaveCount(6);
+  if (options.waitForReady !== false) await expect(page.getByTestId('torrent-row')).toHaveCount(6);
   return { torrents, calls };
 }
 
@@ -134,7 +143,7 @@ test('optional full-speed support and real control request', async ({ page }) =>
 test('standard daemons never advertise an unsupported Full speed button', async ({ page }) => {
   await server(page, false);
   await page.getByTestId('torrent-row').first().click();
-  await expect(page.locator('.boost-card')).toHaveCount(0);
+  await expect(page.locator('.full-speed-button')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Enable Full speed/ })).toHaveCount(0);
 });
 test('mobile navigation, inspector, file tree, and modal fit the viewport', async ({ page }) => {
@@ -174,7 +183,7 @@ test('batch delete is conservative and requires explicit data deletion', async (
 test('stale controller heartbeats hide Full speed', async ({ page }) => {
   await server(page, 'stale');
   await page.getByTestId('torrent-row').first().click();
-  await expect(page.locator('.boost-card')).toHaveCount(0);
+  await expect(page.locator('.full-speed-button')).toHaveCount(0);
 });
 
 test('dark theme, reduced motion, and batch selection work together', async ({ page }) => {
@@ -326,17 +335,20 @@ test('mobile navigation is thumb reachable and every visible control has a 44px 
   const addBox = await page.getByRole('button', { name: 'Add torrent', exact: true }).boundingBox();
   expect(addBox!.y).toBeGreaterThan(700);
   await nav.getByRole('button', { name: 'Activity', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Activity', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Activity', exact: true, level: 1 }),
+  ).toBeVisible();
   expect(await smallTargets(page)).toEqual([]);
   await page.screenshot({ path: 'test-results/drift-mobile-activity.png', fullPage: true });
   await nav.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
   expect(await smallTargets(page)).toEqual([]);
-  await page.locator('.settings-tabs').getByRole('button', { name: 'Limits', exact: true }).click();
-  await page.getByRole('spinbutton', { name: 'Limit download', exact: true }).fill('123');
+  await page.getByRole('combobox', { name: 'Settings section' }).selectOption('Limits');
+  await page.getByRole('switch', { name: 'Download limit', exact: true }).check();
+  await page.getByRole('spinbutton', { name: 'Maximum download', exact: true }).fill('123');
   await nav.getByRole('button', { name: 'Activity', exact: true }).click();
   await nav.getByRole('button', { name: 'Settings', exact: true }).click();
-  await expect(page.getByRole('spinbutton', { name: 'Limit download', exact: true })).toHaveValue(
+  await expect(page.getByRole('spinbutton', { name: 'Maximum download', exact: true })).toHaveValue(
     '123',
   );
   await nav.getByRole('button', { name: 'Transfers', exact: true }).click();
@@ -496,7 +508,7 @@ test('small phones keep file, tracker, options, and settings controls at 44px wi
     .getByRole('button', { name: 'Settings', exact: true })
     .click();
   for (const name of ['Connection', 'Appearance', 'Limits', 'Transfers', 'Network']) {
-    await page.locator('.settings-tabs').getByRole('button', { name, exact: true }).click();
+    await page.getByRole('combobox', { name: 'Settings section' }).selectOption(name);
     await audit();
     await page.locator('.mobile-page-scroll').evaluate((el) => {
       el.scrollTop = el.scrollHeight;
@@ -524,7 +536,7 @@ test('missing newer APIs and blocked storage keep the client usable', async ({ p
   expect(await page.evaluate(() => 'inert' in HTMLElement.prototype)).toBe(true);
   await expect(page.locator('.row-actions').first()).toHaveCSS('opacity', '1');
   await page.getByTestId('torrent-row').first().click();
-  await expect(page.locator('.boost-card')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Full speed', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Close inspector' }).click();
   await expect(page.locator('.inspector')).toHaveCount(0);
   for (let i = 0; i < 2; i++) {
@@ -538,10 +550,7 @@ test('missing newer APIs and blocked storage keep the client usable', async ({ p
     .getByRole('navigation', { name: 'Main navigation' })
     .getByRole('button', { name: 'Settings', exact: true })
     .click();
-  await page
-    .locator('.settings-tabs')
-    .getByRole('button', { name: 'Appearance', exact: true })
-    .click();
+  await page.getByRole('combobox', { name: 'Settings section' }).selectOption('Appearance');
   await page.getByRole('combobox', { name: 'Color theme' }).selectOption('dark');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
@@ -556,4 +565,158 @@ test('mobile menu actions target the tapped torrent without a prior selection', 
   await expect
     .poll(() => calls.find((c) => c.method === 'torrent-stop')?.arguments.ids)
     .toEqual([1]);
+});
+
+test('transient startup failures stay in the loading state without a warning flash', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).__startupAlerts = [];
+    new MutationObserver(() => {
+      const alert = document.querySelector('[role=alert]');
+      if (alert) (window as any).__startupAlerts.push(alert.textContent);
+    }).observe(document, { childList: true, subtree: true });
+  });
+  await server(page, true, { startupFailures: 2 });
+  expect(await page.evaluate(() => (window as any).__startupAlerts)).toEqual([]);
+});
+
+test('a persistent startup failure has a useful error after the initial retry', async ({
+  page,
+}) => {
+  await server(page, true, { startupFailures: 99, waitForReady: false });
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('alert')).toContainText('Cannot reach Transmission', {
+    timeout: 15000,
+  });
+  await expect(
+    page.getByRole('button', { name: 'Connection settings', exact: true }),
+  ).toBeVisible();
+});
+
+test('layout, details, peer card, and settings follow the reviewed composition', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 2000, height: 1100 });
+  await server(page);
+  const row = page.getByTestId('torrent-row').last();
+  expect((await row.boundingBox())!.width).toBeLessThanOrEqual(1120);
+  const icon = await row.locator('.torrent-icon').boundingBox(),
+    box = await row.boundingBox();
+  expect(Math.abs(icon!.y + icon!.height / 2 - (box!.y + box!.height / 2))).toBeLessThan(2);
+  const search = await page.locator('.search-box').boundingBox(),
+    add = await page.getByRole('button', { name: 'Add torrent', exact: true }).boundingBox();
+  expect(Math.abs(search!.height - add!.height)).toBeLessThan(2);
+  await expect(page.getByRole('button', { name: 'Toggle inspector' })).toHaveCount(0);
+  await expect(row.locator('.row-speeds')).toHaveText(/KB\/s/);
+  await page.screenshot({ path: 'test-results/review-desktop-wide.png', fullPage: true });
+  await row.click();
+  await expect(page.getByRole('button', { name: 'Full speed', exact: true })).toBeDisabled();
+  await expect(page.locator('.inspector')).not.toContainText('No labels');
+  await page.screenshot({ path: 'test-results/review-completed-details.png', fullPage: true });
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await page.getByTestId('torrent-row').first().click();
+  await page.getByRole('tab', { name: /^Peers/ }).click();
+  await page.getByRole('button', { name: 'Inspect peer 192.0.2.1', exact: true }).click();
+  const graph = await page.locator('.peer-map>svg').boundingBox(),
+    card = await page.locator('.peer-card').boundingBox();
+  expect(card!.y).toBeGreaterThanOrEqual(graph!.y + graph!.height);
+  await page.getByRole('button', { name: 'Clear peer selection' }).click();
+  await expect(page.locator('.peer-card')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page
+    .locator('.settings-tabs')
+    .getByRole('button', { name: 'Network', exact: true })
+    .click();
+  await page.screenshot({ path: 'test-results/review-settings-desktop.png', fullPage: true });
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page
+    .getByRole('navigation', { name: 'Main navigation' })
+    .getByRole('button', { name: 'Settings', exact: true })
+    .click();
+  await page.getByRole('combobox', { name: 'Settings section' }).selectOption('Network');
+  await page.waitForTimeout(220);
+  await page.screenshot({ path: 'test-results/review-settings-phone.png', fullPage: true });
+  expect(await smallTargets(page)).toEqual([]);
+});
+
+test('recorded server history is available before opening the frontend and after reconnecting', async ({
+  page,
+}) => {
+  const now = Date.now();
+  const samples = [
+    [now - 90000, 4800000, 120000],
+    [now - 60000, 2000000, 240000],
+  ];
+  await page.route('**/activity.json', (route) =>
+    route.fulfill({ json: { version: 1, updated: Date.now() / 1000, samples } }),
+  );
+  await server(page);
+  await expect(page.getByText('Recording on the server', { exact: true })).toBeVisible();
+  await expect
+    .poll(async () => Number(await page.getByRole('slider').getAttribute('aria-valuemax')))
+    .toBeGreaterThanOrEqual(2);
+  await page.goto('about:blank');
+  samples.push([now - 30000, 3500000, 120000]);
+  await page.goto('/');
+  await expect(page.getByText('Recording on the server', { exact: true })).toBeVisible();
+  await expect
+    .poll(async () => Number(await page.getByRole('slider').getAttribute('aria-valuemax')))
+    .toBeGreaterThanOrEqual(3);
+});
+
+test('mobile settings keep the commit action reachable and submit the associated form', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  const { calls } = await server(page);
+  await page
+    .getByRole('navigation', { name: 'Main navigation' })
+    .getByRole('button', { name: 'Settings', exact: true })
+    .click();
+  await page.getByRole('combobox', { name: 'Settings section' }).selectOption('Network');
+  await page.getByRole('spinbutton', { name: 'Incoming port', exact: true }).fill('54321');
+  const save = page.getByRole('button', { name: 'Save changes', exact: true }),
+    box = await save.boundingBox();
+  expect(box!.y).toBeGreaterThan(450);
+  expect(box!.y + box!.height).toBeLessThan(580);
+  await save.click();
+  await expect
+    .poll(() => calls.find((c) => c.method === 'session-set')?.arguments['peer-port'])
+    .toBe(54321);
+});
+
+test('single-file priorities fit and labels filter the library', async ({ page }) => {
+  const { torrents } = await server(page);
+  torrents[0].files = [
+    { name: '7.Days.to.End.with.You.v1.2.02.rar', length: 27520000, bytesCompleted: 27520000 },
+  ];
+  torrents[0].fileStats = [{ wanted: true, priority: 0, bytesCompleted: 27520000 }];
+  torrents[0].labels = ['Linux'];
+  await page.getByTestId('torrent-row').first().click();
+  await expect(page.locator('.label-chip').filter({ hasText: 'Linux' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Files', exact: true }).click();
+  await expect(page.locator('.file-priority')).toHaveValue('0');
+  const fit = await page.locator('.file-priority').evaluate((select) => {
+    const el = select as HTMLSelectElement;
+    const style = getComputedStyle(el),
+      canvas = document.createElement('canvas'),
+      context = canvas.getContext('2d')!;
+    context.font = style.font;
+    return (
+      context.measureText(el.options[el.selectedIndex].text).width +
+        parseFloat(style.paddingLeft) +
+        parseFloat(style.paddingRight) <=
+      el.clientWidth
+    );
+  });
+  expect(fit).toBe(true);
+  await page.screenshot({ path: 'test-results/review-file-tree.png', fullPage: true });
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  await page.locator('.label-chip').filter({ hasText: 'Linux' }).click();
+  await expect(page.getByTestId('torrent-row')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Clear label filter' }).click();
+  await expect(page.getByTestId('torrent-row')).toHaveCount(6);
 });
