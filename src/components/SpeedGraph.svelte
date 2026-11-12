@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ArrowDown, ArrowUp, Activity } from '@lucide/svelte';
-  import { LineChart } from 'layerchart/svg';
+  import { LineChart, ClipPath, Spline } from 'layerchart/svg';
   import { scaleTime } from 'd3-scale';
   import { curveMonotoneX } from 'd3-shape';
   import { speed } from '../lib/format';
@@ -163,7 +163,20 @@
             root: { motion: 'none', fadeDuration: motion(100) },
           },
         }}
-      />
+      >
+        {#snippet marks({ context })}
+          <ClipPath path={`M0,0 H${context.width} V${context.height} H0 Z`}>
+            {#each context.series.visibleSeries as item (item.key)}
+              <Spline
+                seriesKey={item.key}
+                curve={curveMonotoneX}
+                strokeWidth={2}
+                defined={(d: { gap?: boolean }) => !d.gap}
+              />
+            {/each}
+          </ClipPath>
+        {/snippet}
+      </LineChart>
       {#if samples.length < 2}<div class="chart-collecting">Collecting live history</div>{/if}
     </div>{:else}<div class="idle-history">
       <Activity size={20} /><span
