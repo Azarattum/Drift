@@ -517,7 +517,7 @@
                         size={13}
                       />{/if}</span
                   >{/if}{n.children.length
-                  ? `${n.ids.length} files`
+                  ? `${n.ids.length} ${n.ids.length === 1 ? 'file' : 'files'}`
                   : bytes(n.length)}{#if !n.children.length && n.completed < n.length}<span
                     class="file-completion"
                   >
