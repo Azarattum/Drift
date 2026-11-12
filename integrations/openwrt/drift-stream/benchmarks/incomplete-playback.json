@@ -1,0 +1,90 @@
+{
+  "productionPlayer": {
+    "playback": true,
+    "resume": true
+  },
+  "fixtureBytes": 12890594,
+  "binaryBytes": 1040672,
+  "idleStart": {
+    "ticks": 16,
+    "totalTicks": 75212470,
+    "detail": [
+      "VmHWM: 1300",
+      "VmRSS: 1108",
+      "Threads: 1",
+      "voluntary_ctxt_switches: 352",
+      "nonvoluntary_ctxt_switches: 137"
+    ]
+  },
+  "idleEnd": {
+    "ticks": 16,
+    "totalTicks": 75214507,
+    "detail": [
+      "VmHWM: 1300",
+      "VmRSS: 1108",
+      "Threads: 1",
+      "voluntary_ctxt_switches: 352",
+      "nonvoluntary_ctxt_switches: 137"
+    ]
+  },
+  "idleTicks": 0,
+  "trials": [
+    {
+      "concurrency": 1,
+      "bytes": 103124752,
+      "seconds": 2.1219445419999974,
+      "mibPerSecond": 46.34778403561321,
+      "cpuTicks": 81,
+      "machineTicks": 466,
+      "after": {
+        "ticks": 97,
+        "totalTicks": 75215018,
+        "detail": [
+          "VmHWM: 1324",
+          "VmRSS: 1116",
+          "Threads: 3",
+          "voluntary_ctxt_switches: 1942",
+          "nonvoluntary_ctxt_switches: 509"
+        ]
+      }
+    },
+    {
+      "concurrency": 4,
+      "bytes": 412499008,
+      "seconds": 6.405049790999998,
+      "mibPerSecond": 61.41868093288276,
+      "cpuTicks": 429,
+      "machineTicks": 1308,
+      "after": {
+        "ticks": 526,
+        "totalTicks": 75216370,
+        "detail": [
+          "VmHWM: 1612",
+          "VmRSS: 1116",
+          "Threads: 3",
+          "voluntary_ctxt_switches: 3716",
+          "nonvoluntary_ctxt_switches: 6029"
+        ]
+      }
+    }
+  ],
+  "paced": {
+    "targetBitsPerSecond": 20000000,
+    "bytes": 12890594,
+    "seconds": 5.3898570830000025,
+    "cpuTicks": 9,
+    "machineTicks": 1077
+  },
+  "deniedRequests": [404, 400, 404],
+  "sparsePartWait": true,
+  "missingPiecePriority": true,
+  "partialPlayer": {
+    "startPercent": 0.02033606916666031,
+    "seekPercent": 0.20308032631874084,
+    "playedAfterSeek": 21.0084
+  },
+  "observedExitMs": 223.71195799999987,
+  "procdRestart": true,
+  "procdStop": true,
+  "binarySha256": "2b87bb7cd95fe0069dd4968dc1645ff8a52bbfa61d0ecd35e008f32f969b1702"
+}

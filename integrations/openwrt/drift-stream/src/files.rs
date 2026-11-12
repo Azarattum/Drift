@@ -88,6 +88,15 @@ pub fn open_media(roots: &[Root], torrent: &Torrent, index: usize) -> Result<Fil
     if media_type(&entry.name).is_none() {
         return Err("Not an allowed video container".into());
     }
+    open_torrent_file(roots, torrent, index)
+}
+
+pub(crate) fn open_torrent_file(
+    roots: &[Root],
+    torrent: &Torrent,
+    index: usize,
+) -> Result<File, Error> {
+    let entry = torrent.files.get(index).ok_or("Unknown file")?;
     let name = Path::new(&entry.name);
     // Explicit raw segments also reject '.' which Path::components normalizes away.
     if entry

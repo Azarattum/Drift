@@ -3,12 +3,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createConnection, createServer, type Socket } from 'node:net';
 
 const [host, portText = '19091', playerFlag] = Bun.argv.slice(2);
 if (!host || !/^[a-zA-Z0-9_.@:-]+$/.test(host) || (playerFlag && playerFlag !== '--player'))
   throw new Error('Usage: bun benchmark.ts user@router [unused RPC port] [--player]');
 const port = Number(portText);
-if (!Number.isInteger(port) || port < 1024 || port >= 65535) throw new Error('Invalid port');
+if (!Number.isInteger(port) || port < 1024 || port > 65530) throw new Error('Invalid port');
 const address = host.split('@').at(-1)!;
 const url = `http://${address}:${port}`;
 const root = dirname(import.meta.path);
@@ -33,17 +34,20 @@ async function ssh(command: string, input?: Uint8Array) {
   if (code) throw new Error(`Router command failed: ${err.trim()}`);
   return out.trim();
 }
-let token = '';
-async function rpc(method: string, args: Record<string, unknown> = {}) {
+const tokens = new Map<number, string>();
+async function rpc(method: string, args: Record<string, unknown> = {}, rpcPort = port) {
   for (let i = 0; i < 3; i++) {
-    const r = await fetch(`${url}/transmission/rpc`, {
+    const r = await fetch(`http://${address}:${rpcPort}/transmission/rpc`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-transmission-session-id': token },
+      headers: {
+        'content-type': 'application/json',
+        'x-transmission-session-id': tokens.get(rpcPort) ?? '',
+      },
       body: JSON.stringify({ method, arguments: args }),
       signal: AbortSignal.timeout(5000),
     });
     if (r.status === 409) {
-      token = r.headers.get('x-transmission-session-id') ?? '';
+      tokens.set(rpcPort, r.headers.get('x-transmission-session-id') ?? '');
       continue;
     }
     if (!r.ok) throw new Error(`Fixture RPC HTTP ${r.status}`);
@@ -71,6 +75,13 @@ const remote = `/tmp/drift-stream-${randomUUID()}`;
 let dataDir = '';
 let daemonPid = '';
 let streamPid = '';
+let seedPid = '';
+let tracker: ReturnType<typeof Bun.serve> | undefined;
+let seedReady = false;
+let seedProxy: ReturnType<typeof createServer> | undefined;
+const seedSockets = new Set<Socket>();
+let partialPlayer:
+  { startPercent: number; seekPercent: number; playedAfterSeek: number } | undefined;
 let playerResult: { playback: boolean; resume: boolean } | undefined;
 const serviceName = 'drift-stream-benchmark';
 const servicePath = `${remote}/${serviceName}`;
@@ -118,7 +129,49 @@ try {
     pieces: Buffer.concat(pieces),
     private: 1,
   };
-  const metainfo = bencode({ info });
+  const client = await ssh('set -- $SSH_CONNECTION; printf "%s" "$1"');
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(client))
+    throw new Error('Benchmark tracker needs an IPv4 SSH client address');
+  seedProxy = createServer((socket) => {
+    const upstream = createConnection({ host: address, port: port + 4 });
+    for (const s of [socket, upstream]) {
+      seedSockets.add(s);
+      s.on('error', () => {
+        socket.destroy();
+        upstream.destroy();
+      });
+      s.on('close', () => {
+        seedSockets.delete(s);
+        socket.destroy();
+        upstream.destroy();
+      });
+    }
+    socket.pipe(upstream).pipe(socket);
+  });
+  await new Promise<void>((resolve, reject) => {
+    seedProxy!.once('error', reject);
+    seedProxy!.listen(0, '0.0.0.0', resolve);
+  });
+  const peer = Buffer.alloc(6);
+  peer.set(client.split('.').map(Number));
+  const proxyAddress = seedProxy.address();
+  if (!proxyAddress || typeof proxyAddress === 'string') throw new Error('No seed proxy port');
+  peer.writeUInt16BE(proxyAddress.port, 4);
+  tracker = Bun.serve({
+    hostname: '0.0.0.0',
+    port: 0,
+    fetch(request) {
+      const downloader = new URL(request.url).searchParams.get('port') === String(port + 2);
+      return new Response(
+        bencode({
+          interval: 1,
+          'min interval': 1,
+          peers: seedReady && downloader ? peer : Buffer.alloc(0),
+        }),
+      );
+    },
+  });
+  const metainfo = bencode({ announce: `http://${client}:${tracker.port}/announce`, info });
   const hash = createHash('sha1').update(bencode(info)).digest('hex');
   dataDir = await ssh(
     `base="$(uci -q get transmission.@transmission[0].download_dir)"; test -d "$base" && mktemp -d "$base/.drift-benchmark.XXXXXX"`,
@@ -129,7 +182,6 @@ try {
     new Uint8Array(await binary.arrayBuffer()),
   );
   await ssh(`cat > ${q(dataDir + '/video.mp4')}`, data);
-  const client = await ssh('set -- $SSH_CONNECTION; printf "%s" "$1"');
   const web = dataDir + '/web';
   if (playerFlag === '--player') {
     const bundle = join(root, '../../../dist');
@@ -164,7 +216,7 @@ try {
     'lpd-enabled': false,
     'port-forwarding-enabled': false,
     'peer-port': port + 2,
-    'peer-limit-global': 1,
+    'peer-limit-global': 8,
     'message-level': 1,
     'start-added-torrents': false,
   };
@@ -377,9 +429,16 @@ start_service() {
     !Buffer.from(await prefix.arrayBuffer()).equals(data.subarray(0, 128))
   )
     throw new Error('Verified .part prefix differs');
+  const preparation = await fetch(streamUrl.replace('/media/', '/play/'), {
+    method: 'POST',
+    headers: { 'X-Drift-Stream': '1' },
+  });
+  if (!preparation.ok) throw new Error('Sparse playback preparation failed');
+  const manifest = await preparation.json();
+  const missingPiece = Math.floor(data.length / pieceSize / 2);
   const cancel = new AbortController();
-  const hole = fetch(streamUrl, {
-    headers: { range: `bytes=${pieceSize}-${pieceSize + 15}` },
+  const hole = fetch(new URL(manifest.src, streamUrl), {
+    headers: { range: `bytes=${missingPiece * pieceSize}-${missingPiece * pieceSize + 15}` },
     signal: cancel.signal,
   }).then(async (r) => {
     const first = await r.body!.getReader().read();
@@ -387,9 +446,140 @@ start_service() {
     return 'ended';
   });
   const holeResult = await Promise.race([hole, Bun.sleep(1200).then(() => 'waiting')]);
+  const priority = await fetch(new URL(manifest.priority, streamUrl), {
+    method: 'POST',
+    headers: { 'X-Drift-Stream': '1' },
+  });
+  const scheduled = (
+    await rpc('torrent-get', { ids: [hash], fields: ['sequential_download_from_piece'] })
+  ).torrents[0];
+  if (!priority.ok || scheduled.sequential_download_from_piece !== missingPiece)
+    throw new Error(`Requested missing piece was not prioritized: ${JSON.stringify(scheduled)}`);
   cancel.abort();
   await hole.catch(() => {});
   if (holeResult !== 'waiting') throw new Error('Missing piece did not wait');
+  // A real, rate-limited second peer fills the gaps. Neither process is the user's Transmission.
+  await ssh(
+    `mkdir -m 700 ${q(remote + '/seed-config')} ${q(dataDir + '/seed')}; cp ${q(dataDir + '/fixture.backup')} ${q(dataDir + '/seed/video.mp4')}`,
+  );
+  await ssh(
+    `cat > ${q(remote + '/seed-config/settings.json')}`,
+    Buffer.from(
+      JSON.stringify({
+        ...settings,
+        'download-dir': dataDir + '/seed',
+        'rpc-port': port + 3,
+        'peer-port': port + 4,
+        'speed-limit-up-enabled': true,
+        'speed-limit-up': 512,
+      }),
+    ),
+  );
+  seedPid = await ssh(
+    `trap '' HUP; transmission-daemon -f -g ${q(remote + '/seed-config')} >${q(remote + '/seed.log')} 2>&1 < /dev/null & echo $!`,
+  );
+  for (let i = 0; ; i++) {
+    try {
+      await rpc('session-get', {}, port + 3);
+      break;
+    } catch (e) {
+      if (i >= 50) throw e;
+    }
+    await Bun.sleep(100);
+  }
+  await rpc('torrent-add', { metainfo: metainfo.toString('base64'), paused: true }, port + 3);
+  await rpc('torrent-verify', { ids: [hash] }, port + 3);
+  for (let i = 0; ; i++) {
+    const t = (
+      await rpc('torrent-get', { ids: [hash], fields: ['status', 'percentDone'] }, port + 3)
+    ).torrents[0];
+    if (t.status === 0 && t.percentDone === 1) break;
+    if (i >= 100) throw new Error('Seed verification failed');
+    await Bun.sleep(100);
+  }
+  await rpc('torrent-start', { ids: [hash] }, port + 3);
+  if (playerFlag === '--player') {
+    const { chromium } = await import('@playwright/test');
+    const browser = await chromium.launch({ headless: true });
+    const diagnostics: unknown[] = [];
+    let partialPage: Awaited<ReturnType<typeof browser.newPage>> | undefined;
+    try {
+      const page = await browser.newPage();
+      partialPage = page;
+      page.on('response', (r) => {
+        const path = new URL(r.url()).pathname;
+        if (path.startsWith('/v1/'))
+          diagnostics.push({ path, status: r.status(), range: r.request().headers().range });
+      });
+      await page.goto(`${url}/transmission/web/`);
+      await page.locator('[data-testid="torrent-row"]').first().click();
+      await page.getByRole('button', { name: 'Watch video', exact: true }).click();
+      await page.waitForFunction(() => (document.querySelector('video')?.readyState ?? 0) >= 1);
+      const startPercent = (await rpc('torrent-get', { ids: [hash], fields: ['percentDone'] }))
+        .torrents[0].percentDone;
+      if (startPercent >= 1) throw new Error('Partial test started with a completed torrent');
+      seedReady = true;
+      await rpc('torrent-reannounce', { ids: [hash] });
+      const video = page.locator('video');
+      await video.evaluate((v: HTMLVideoElement) => {
+        void v.play();
+      });
+      await page.waitForFunction(
+        () => (document.querySelector('video')?.currentTime ?? 0) >= 4,
+        null,
+        { timeout: 90000 },
+      );
+      const seekPercent = (await rpc('torrent-get', { ids: [hash], fields: ['percentDone'] }))
+        .torrents[0].percentDone;
+      if (seekPercent >= 1) throw new Error('Partial seek only tested a completed torrent');
+      await video.evaluate((v: HTMLVideoElement) => {
+        v.currentTime = 20;
+      });
+      await page.waitForFunction(
+        () => {
+          const v = document.querySelector('video');
+          return v && !v.paused && v.currentTime >= 21;
+        },
+        null,
+        { timeout: 90000 },
+      );
+      partialPlayer = {
+        startPercent,
+        seekPercent,
+        playedAfterSeek: await video.evaluate((v: HTMLVideoElement) => v.currentTime),
+      };
+      await page.getByRole('button', { name: 'Close dialog' }).click();
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          diagnostics,
+          browser: await partialPage
+            ?.evaluate(() => {
+              const v = document.querySelector('video');
+              return {
+                text: document.querySelector('dialog')?.textContent,
+                time: v?.currentTime,
+                readyState: v?.readyState,
+                error: v?.error?.message,
+                ranges: v
+                  ? Array.from({ length: v.buffered.length }, (_, i) => [
+                      v.buffered.start(i),
+                      v.buffered.end(i),
+                    ])
+                  : [],
+              };
+            })
+            .catch(() => null),
+        }),
+      );
+      throw error;
+    } finally {
+      await browser.close();
+    }
+  }
+  await ssh(`kill -TERM ${seedPid}`);
+  seedPid = '';
+  seedReady = false;
   await rpc('torrent-remove', { ids: [hash], 'delete-local-data': false });
   await ssh(
     `rm ${q(dataDir + '/video.mp4.part')}; mv ${q(dataDir + '/fixture.backup')} ${q(dataDir + '/video.mp4')}`,
@@ -461,6 +651,8 @@ start_service() {
         paced: pacedResult,
         deniedRequests: requests,
         sparsePartWait: holeResult === 'waiting',
+        missingPiecePriority: scheduled.sequential_download_from_piece === missingPiece,
+        partialPlayer,
         observedExitMs,
         procdRestart: restarted,
         procdStop: !stopped.stream && !stopped.transmission,
@@ -477,6 +669,11 @@ start_service() {
   );
   throw error;
 } finally {
+  for (const socket of seedSockets) socket.destroy();
+  seedProxy?.close();
+  tracker?.stop(true);
+  if (seedPid && /^\d+$/.test(seedPid))
+    await ssh(`kill -TERM ${seedPid} 2>/dev/null || true`).catch(() => {});
   await ssh(`test ! -x ${q(servicePath)} || ${q(servicePath)} stop`).catch(() => {});
   if (streamPid && /^\d+$/.test(streamPid))
     await ssh(`kill -TERM ${streamPid} 2>/dev/null || true`).catch(() => {});

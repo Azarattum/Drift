@@ -115,3 +115,41 @@ These are independent samples under the same limitations as the original run.
 Range integrity, sparse `.part` waiting, access rejection, and procd
 crash/respawn/stop checks passed again; observing the companion exit took **211 ms**.
 The isolated service, temporary frontend and test data were removed afterward.
+
+## Incomplete playback and subtitle follow-up
+
+The range-scheduling/subtitle build was measured on the same router and SSD on
+2026-11-13. Binary size: **1,040,672 bytes**, SHA-256:
+
+```text
+2b87bb7cd95fe0069dd4968dc1645ff8a52bbfa61d0ecd35e008f32f969b1702
+```
+
+Raw counters: [benchmarks/incomplete-playback.json](benchmarks/incomplete-playback.json).
+The production bundle ran in Chromium against real Transmission RPC and the
+companion, with no mocked media or RPC responses. In addition to complete-file
+playback/resume and byte-integrity checks:
+
+- A sparse `.part` contained only the first verified piece. A request for a
+  missing middle piece returned no unverified bytes. An explicit priority POST
+  moved the real Transmission sequential cursor to that exact piece.
+- The player opened at **2.03% downloaded**. A separate, temporary Transmission
+  seed, limited to 512 KiB/s, supplied missing pieces through a LAN TCP relay.
+  Playback passed four seconds, beyond the original 0.61-second prefix.
+- At **20.31% downloaded**, the browser sought to 20 seconds and continued past
+  **21.008 seconds**. This exercises actual missing-piece download and native
+  browser playback rather than a completed-file seek or a mocked bitfield.
+- The test exposed a rejected CORS preflight on ticketed priority URLs. After
+  fixing that route, the browser could schedule missing pieces and preserve its
+  stream while waiting, instead of exhausting its eight-second reconnect budget.
+- Companion exit, procd respawn and service stop passed again. All fixture
+  processes and data were removed; the original Transmission was not restarted.
+
+The ten-second idle sample recorded **16 → 16 CPU ticks**, **352 → 352 voluntary
+context switches** and **137 → 137 involuntary context switches**, with one thread
+and **1,108 KiB** resident memory. One reader measured **46.35 MiB/s**, four readers
+**61.42 MiB/s**; the paced sample consumed **9 / 1,077** process/whole-machine ticks.
+The earlier measurement limitations still apply. This is one controlled partial
+torrent and Chromium run, not evidence that every codec, swarm or physical iPhone
+will behave identically. Subtitle conversion and native cue rendering are covered
+separately by the Rust, Chromium, current WebKit and pinned WebKit 15.4 checks.

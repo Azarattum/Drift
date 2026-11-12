@@ -3,6 +3,7 @@ use crate::{
     config::Config,
     files::{self, Root},
     rpc::{Rpc, RpcFailure, Torrent},
+    subtitles,
 };
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, StreamBody, combinators::UnsyncBoxBody};
@@ -18,7 +19,10 @@ use std::{
     fs::File,
     io::Read,
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 use tokio::{
@@ -37,11 +41,13 @@ pub struct State {
     pub rpc: Rpc,
     streams: Arc<Semaphore>,
     leases: Mutex<BTreeMap<String, Lease>>,
+    next_request: AtomicU64,
 }
 struct Lease {
     path: String,
-    authorization: HeaderValue,
+    authorization: Option<HeaderValue>,
     expires: Instant,
+    pending: BTreeMap<u64, u64>,
 }
 impl State {
     pub fn new(config: Config) -> Result<Self, Error> {
@@ -56,10 +62,20 @@ impl State {
             roots,
             streams: Arc::new(Semaphore::new(4)),
             leases: Mutex::new(BTreeMap::new()),
+            next_request: AtomicU64::new(0),
         })
     }
     fn media_authorization(&self, request: &Request<Incoming>) -> Option<HeaderValue> {
         let leases = self.leases.lock().ok()?;
+        // A video ticket also covers only its matching subtitle route. Matching is
+        // checked against the live torrent below before any subtitle file is read.
+        let subtitle_scope = request
+            .uri()
+            .path()
+            .strip_prefix("/v1/subtitles/")
+            .and_then(|p| p.rsplit_once('/'))
+            .map(|(video, _)| format!("/v1/media/{video}"));
+        let scope = subtitle_scope.as_deref().unwrap_or(request.uri().path());
         request
             .uri()
             .query()
@@ -75,13 +91,13 @@ impl State {
                     .filter_map(|v| v.trim().strip_prefix("drift_media=")),
             )
             .filter_map(|token| leases.get(token))
-            .find(|l| l.path == request.uri().path() && l.expires > Instant::now())
-            .map(|l| l.authorization.clone())
+            .find(|l| l.path == scope && l.expires > Instant::now())
+            .and_then(|l| l.authorization.clone())
     }
     fn authorize_media(
         &self,
         path: String,
-        authorization: HeaderValue,
+        authorization: Option<HeaderValue>,
     ) -> Result<(HeaderValue, String), Error> {
         let mut random = [0u8; 32];
         File::open("/dev/urandom")?.read_exact(&mut random)?;
@@ -109,9 +125,34 @@ impl State {
                 path,
                 authorization,
                 expires: Instant::now() + Duration::from_secs(43200),
+                pending: BTreeMap::new(),
             },
         );
         Ok((cookie.parse()?, token))
+    }
+}
+
+struct PendingRange {
+    state: Arc<State>,
+    token: String,
+    id: u64,
+}
+impl PendingRange {
+    fn set(&self, position: Option<u64>) {
+        if let Ok(mut leases) = self.state.leases.lock() {
+            if let Some(lease) = leases.get_mut(&self.token) {
+                if let Some(position) = position {
+                    lease.pending.insert(self.id, position);
+                } else {
+                    lease.pending.remove(&self.id);
+                }
+            }
+        }
+    }
+}
+impl Drop for PendingRange {
+    fn drop(&mut self) {
+        self.set(None);
     }
 }
 
@@ -238,8 +279,13 @@ async fn checked(
     });
     if (request.uri().query().is_some()
         && !(ticket_query
-            && request.uri().path().starts_with("/v1/media/")
-            && (request.method() == Method::GET || request.method() == Method::HEAD)))
+            && (((request.uri().path().starts_with("/v1/media/")
+                || request.uri().path().starts_with("/v1/subtitles/"))
+                && (request.method() == Method::GET
+                    || request.method() == Method::HEAD
+                    || request.method() == Method::OPTIONS))
+                || (request.uri().path().starts_with("/v1/priority/")
+                    && (request.method() == Method::POST || request.method() == Method::OPTIONS)))))
         || request.uri().authority().is_some()
     {
         return Err(error(StatusCode::BAD_REQUEST, "Invalid URL\n"));
@@ -284,9 +330,10 @@ async fn checked(
         ));
     }
     let parts: Vec<_> = path.split('/').collect();
-    if parts.len() != 5
+    let subtitle = parts.get(2) == Some(&"subtitles");
+    if parts.len() != if subtitle { 6 } else { 5 }
         || parts[1] != "v1"
-        || !["media", "play"].contains(&parts[2])
+        || !["media", "play", "subtitles", "priority"].contains(&parts[2])
         || parts[3].len() != 40
         || !parts[3].bytes().all(|b| b.is_ascii_hexdigit())
     {
@@ -297,8 +344,11 @@ async fn checked(
         .parse()
         .map_err(|_| error(StatusCode::NOT_FOUND, "Video not found\n"))?;
     let play = parts[2] == "play";
-    if (play && request.method() != Method::POST)
-        || (!play && request.method() != Method::GET && request.method() != Method::HEAD)
+    let priority = parts[2] == "priority";
+    if ((play || priority) && request.method() != Method::POST)
+        || (!(play || priority)
+            && request.method() != Method::GET
+            && request.method() != Method::HEAD)
     {
         return Err(error(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -306,7 +356,7 @@ async fn checked(
         ));
     }
     // A non-simple header prevents cross-site forms from changing torrent settings.
-    if play
+    if (play || priority)
         && request
             .headers()
             .get("x-drift-stream")
@@ -325,16 +375,27 @@ async fn checked(
             "Request bodies are not accepted\n",
         ));
     }
-    let permit = state
-        .streams
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "Stream limit reached\n"))?;
+    let permit =
+        if priority {
+            None
+        } else {
+            Some(
+                state.streams.clone().try_acquire_owned().map_err(|_| {
+                    error(StatusCode::SERVICE_UNAVAILABLE, "Stream limit reached\n")
+                })?,
+            )
+        };
     let torrent = state
         .rpc
         .torrent(&hash, auth.as_ref())
         .await
         .map_err(rpc_error)?;
+    if torrent.status == 1 || torrent.status == 2 {
+        return Err(error(
+            StatusCode::CONFLICT,
+            "Transmission is checking this video\n",
+        ));
+    }
     let entry = torrent
         .files
         .get(index)
@@ -356,8 +417,117 @@ async fn checked(
     }
     let bits = files::decode_pieces(&torrent.pieces, torrent.piece_count)
         .map_err(|_| error(StatusCode::BAD_GATEWAY, "Invalid torrent pieces\n"))?;
+    let media_path = format!("/v1/media/{hash}/{index}");
+    let ticket = request
+        .uri()
+        .query()
+        .and_then(|q| q.strip_prefix("ticket="));
+    if priority {
+        // Changing scheduling requires explicit intent and normal RPC credentials;
+        // the ticket only identifies this player's pending range requests.
+        let pending = {
+            let leases = state.leases.lock().map_err(|_| {
+                error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Session store unavailable\n",
+                )
+            })?;
+            let lease = ticket
+                .and_then(|t| leases.get(t))
+                .filter(|l| l.path == media_path && l.expires > Instant::now())
+                .ok_or(error(StatusCode::FORBIDDEN, "Playback session expired\n"))?;
+            lease
+                .pending
+                .last_key_value()
+                .map(|(_, position)| *position)
+        };
+        let first_ready =
+            files::verified_end(&bits, torrent.piece_size, offset, offset + length.min(512))
+                == offset + length.min(512);
+        let needed = pending
+            .or(if first_ready { None } else { Some(0) })
+            .filter(|p| *p < length);
+        let missing = needed.filter(|p| {
+            files::verified_end(&bits, torrent.piece_size, offset + p, offset + p + 1) == offset + p
+        });
+        if let Some(position) = missing {
+            let piece = (offset + position) / torrent.piece_size;
+            if !torrent.sequential_download || torrent.sequential_download_from_piece != piece {
+                state.rpc.call("torrent-set", json!({"ids":[hash],"sequential_download":true,"sequential_download_from_piece":piece}), auth.as_ref()).await.map_err(rpc_error)?;
+            }
+        }
+        return Ok(response(
+            StatusCode::OK,
+            "application/json",
+            &json!({"pending":missing.is_some(),"offset":missing,"firstPieceReady":first_ready})
+                .to_string(),
+        ));
+    }
+    let tracks = subtitles::matching(&torrent, index);
+    if subtitle {
+        let subtitle_index: usize = parts[5]
+            .parse()
+            .map_err(|_| error(StatusCode::NOT_FOUND, "Subtitle not found\n"))?;
+        if !tracks.iter().any(|t| t.index == subtitle_index) {
+            return Err(error(StatusCode::NOT_FOUND, "Subtitle not found\n"));
+        }
+        let entry = &torrent.files[subtitle_index];
+        let subtitle_offset = torrent.files[..subtitle_index]
+            .iter()
+            .try_fold(0u64, |a, f| a.checked_add(f.length))
+            .ok_or(error(StatusCode::BAD_GATEWAY, "Invalid torrent geometry\n"))?;
+        if torrent.status == 1
+            || torrent.status == 2
+            || (!torrent.sequential_download
+                && files::verified_end(&bits, torrent.piece_size, offset, offset + length)
+                    < offset + length)
+            || files::verified_end(
+                &bits,
+                torrent.piece_size,
+                subtitle_offset,
+                subtitle_offset + entry.length,
+            ) < subtitle_offset + entry.length
+        {
+            return Err(error(
+                StatusCode::CONFLICT,
+                "Subtitles are still downloading\n",
+            ));
+        }
+        let state = state.clone();
+        let length = entry.length;
+        let vtt = tokio::task::spawn_blocking(move || {
+            let file = files::open_torrent_file(&state.roots, &torrent, subtitle_index)
+                .map_err(|_| error(StatusCode::NOT_FOUND, "Subtitle not found\n"))?;
+            let bytes = files::read_at(&file, 0, length as usize).map_err(|_| {
+                error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Subtitle data unavailable\n",
+                )
+            })?;
+            subtitles::convert(&bytes).map_err(|_| {
+                error(
+                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                    "Invalid or unsupported subtitle text\n",
+                )
+            })
+        })
+        .await
+        .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "Subtitle unavailable\n"))??;
+        let mut reply = response(StatusCode::OK, "text/vtt; charset=utf-8", &vtt);
+        reply.headers_mut().insert(
+            header::CONTENT_LENGTH,
+            vtt.len().to_string().parse().unwrap(),
+        );
+        if request.method() == Method::HEAD {
+            *reply.body_mut() = empty();
+        }
+        return Ok(reply);
+    }
     if play {
-        state.rpc.call("torrent-set", json!({"ids":[hash],"sequential_download":true,"sequential_download_from_piece":offset / torrent.piece_size,"files-wanted":[index]}), auth.as_ref()).await.map_err(rpc_error)?;
+        let wanted: Vec<_> = std::iter::once(index)
+            .chain(tracks.iter().map(|t| t.index))
+            .collect();
+        state.rpc.call("torrent-set", json!({"ids":[hash],"sequential_download":true,"sequential_download_from_piece":offset / torrent.piece_size,"files-wanted":wanted}), auth.as_ref()).await.map_err(rpc_error)?;
         if torrent.status == 0
             && files::verified_end(&bits, torrent.piece_size, offset, offset + length)
                 < offset + length
@@ -369,34 +539,38 @@ async fn checked(
                 .map_err(rpc_error)?;
         }
         let path = format!("/v1/media/{hash}/{index}");
-        let session = if state.config.authentication {
-            Some(
-                state
-                    .authorize_media(
-                        path.clone(),
-                        auth.ok_or(error(StatusCode::UNAUTHORIZED, "Authentication required\n"))?,
-                    )
-                    .map_err(|_| {
-                        error(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "Cannot create media session\n",
-                        )
-                    })?,
+        let session = state
+            .authorize_media(
+                path.clone(),
+                if state.config.authentication {
+                    auth.clone()
+                } else {
+                    None
+                },
             )
-        } else {
-            None
-        };
-        let src = session.as_ref().map_or_else(
-            || path.clone(),
-            |(_, ticket)| format!("{path}?ticket={ticket}"),
-        );
+            .map_err(|_| {
+                error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Cannot create media session\n",
+                )
+            })?;
+        let src = format!("{path}?ticket={}", session.1);
+        let captions: Vec<_> = tracks
+            .iter()
+            .map(|track| {
+                let path = format!("/v1/subtitles/{hash}/{index}/{}", track.index);
+                let src = format!("{path}?ticket={}", session.1);
+                json!({"index":track.index,"label":track.label,"language":track.language,"src":src})
+            })
+            .collect();
         let mut reply = response(
             StatusCode::OK,
             "application/json",
-            &json!({"version":1,"src":src,"type":mime,"length":length}).to_string(),
+            &json!({"version":1,"src":src,"type":mime,"length":length,"subtitles":captions,"priority":format!("/v1/priority/{hash}/{index}?ticket={}",session.1)})
+                .to_string(),
         );
-        if let Some((cookie, _)) = session {
-            reply.headers_mut().insert(header::SET_COOKIE, cookie);
+        if state.config.authentication {
+            reply.headers_mut().insert(header::SET_COOKIE, session.0);
         }
         return Ok(reply);
     }
@@ -442,7 +616,19 @@ async fn checked(
         auth,
         offset,
         index,
-        _permit: permit,
+        _permit: permit.ok_or(error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Missing stream slot\n",
+        ))?,
+        pending: ticket.and_then(|token| {
+            let leases = state.leases.lock().ok()?;
+            let lease = leases.get(token)?;
+            (lease.path == media_path && lease.expires > Instant::now()).then(|| PendingRange {
+                state: state.clone(),
+                token: token.to_owned(),
+                id: state.next_request.fetch_add(1, Ordering::Relaxed),
+            })
+        }),
     };
     // Sniff only verified bytes, never sparse/unflushed data. Bound the startup wait.
     let sniff_len = length.min(512);
@@ -512,10 +698,12 @@ struct Media {
     offset: u64,
     index: usize,
     _permit: OwnedSemaphorePermit,
+    pending: Option<PendingRange>,
 }
 impl Media {
     async fn wait_for(&mut self, position: u64, wanted: u64) -> Result<u64, Error> {
         let deadline = Instant::now() + WAIT;
+        let mut announced = false;
         loop {
             let available = files::verified_end(
                 &self.bits,
@@ -524,7 +712,18 @@ impl Media {
                 self.offset + wanted,
             ) - self.offset;
             if available > position {
+                if announced {
+                    if let Some(pending) = &self.pending {
+                        pending.set(None);
+                    }
+                }
                 return Ok(available);
+            }
+            if !announced {
+                if let Some(pending) = &self.pending {
+                    pending.set(Some(position));
+                }
+                announced = true;
             }
             if Instant::now() >= deadline {
                 return Err("Timed out waiting for verified pieces".into());

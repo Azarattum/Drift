@@ -40,6 +40,8 @@ pub struct Torrent {
     pub status: u8,
     #[serde(default)]
     pub sequential_download: bool,
+    #[serde(default)]
+    pub sequential_download_from_piece: u64,
 }
 
 pub struct Rpc {
@@ -128,7 +130,7 @@ impl Rpc {
         Err("RPC session negotiation failed".into())
     }
     pub async fn torrent(&self, hash: &str, auth: Option<&HeaderValue>) -> Result<Torrent, Error> {
-        let mut reply = self.call("torrent-get", json!({"ids":[hash], "fields":["hashString","downloadDir","files","pieceSize","pieceCount","pieces","status","sequential_download"]}), auth).await?;
+        let mut reply = self.call("torrent-get", json!({"ids":[hash], "fields":["hashString","downloadDir","files","pieceSize","pieceCount","pieces","status","sequential_download","sequential_download_from_piece"]}), auth).await?;
         let rows = reply
             .get_mut("torrents")
             .and_then(Value::as_array_mut)

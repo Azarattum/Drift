@@ -69,13 +69,15 @@ The stream server is on the same hostname as Transmission, at the adjacent port.
 It accepts HTTP/1.1, closes connections after each response, and does not act as
 an RPC proxy. It never accepts a filesystem path or URL to fetch.
 
-| Request                                               | Behavior                                                                                                                                                                                                                            |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /v1/status`                                      | Authenticated capability JSON, no paths or credentials.                                                                                                                                                                             |
-| `POST /v1/play/<40-character-info-hash>/<file-index>` | Requires `X-Drift-Stream: 1` and no body. Marks the selected video wanted, enables sequential mode, sets its starting piece, and resumes a paused torrent only if that video is incomplete. Returns `{version, src, type, length}`. |
-| `GET /v1/media/<hash>/<file-index>`                   | Verified video bytes, including `.part` and enabled incomplete-directory resolution. No torrent settings are changed by GET.                                                                                                        |
-| `HEAD /v1/media/<hash>/<file-index>`                  | The same type, length and range headers without a media body.                                                                                                                                                                       |
-| `OPTIONS ...`                                         | Preflight for the permitted Drift origin and explicit headers/methods.                                                                                                                                                              |
+| Request                                                        | Behavior                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/status`                                               | Authenticated capability JSON, no paths or credentials.                                                                                                                                                                                                                                                           |
+| `POST /v1/play/<40-character-info-hash>/<file-index>`          | Requires `X-Drift-Stream: 1` and no body. Marks the video and matching subtitles wanted, enables sequential mode, sets its starting piece, and resumes a paused torrent only if that video is incomplete. Returns `{version, src, type, length, subtitles, priority}`. Rejects checking torrents before mutation. |
+| `POST /v1/priority/<hash>/<file-index>?ticket=…`               | Requires playback intent, session ticket and normal RPC credentials if enabled. Moves the sequential cursor to the newest pending native byte-range request. No caller-selected byte offset is accepted.                                                                                                          |
+| `GET /v1/media/<hash>/<file-index>`                            | Verified video bytes, including `.part` and enabled incomplete-directory resolution. No torrent settings are changed by GET.                                                                                                                                                                                      |
+| `HEAD /v1/media/<hash>/<file-index>`                           | The same type, length and range headers without a media body.                                                                                                                                                                                                                                                     |
+| `GET/HEAD /v1/subtitles/<hash>/<video-index>/<subtitle-index>` | Only matching, verified SRT/WebVTT files. Returns sanitized `text/vtt`; missing pieces return `409`, malformed/unsupported text `415`.                                                                                                                                                                            |
+| `OPTIONS ...`                                                  | Preflight for the permitted Drift origin and explicit headers/methods.                                                                                                                                                                                                                                            |
 
 Single byte ranges, suffix ranges and open-ended ranges return `206` with
 `Content-Range`. Invalid/multiple ranges return `416` with `bytes */<length>`.
@@ -83,9 +85,9 @@ There is no cache/ETag contract for changing files. Errors use fixed text and ne
 include RPC strings, local paths, torrent names or credentials.
 
 The Play request sends the same Basic `Authorization` header when Transmission
-requires it. After successful RPC authentication, the companion creates a random
+requires it. The companion creates a random
 256-bit, file-scoped session and returns a `src` with an opaque `ticket` query
-parameter. It also sets an HttpOnly, SameSite=Strict, path-scoped cookie. The ticket
+parameter, including when RPC authentication is disabled. When authentication is enabled it also sets an HttpOnly, SameSite=Strict, path-scoped cookie. The ticket
 supports WebKit native range requests that omit the cross-origin cookie. Neither
 contains a username or password. The frontend accepts only the exact expected
 media path on the derived companion origin and a single well-formed ticket.
@@ -94,8 +96,8 @@ Sessions expire after twelve hours, are bounded to sixteen entries, remain only
 in memory, and disappear on restart. Expiry is checked on requests, with no idle
 timer. Each media request still authenticates against Transmission using the
 in-memory credentials, so password changes invalidate existing sessions. A ticket
-cannot read another file, change download settings, or access RPC. Only the
-`ticket` query parameter is accepted on media GET/HEAD; arbitrary path arguments
+can read the selected video and its matching subtitles; it cannot read unrelated files or access RPC. Scheduling also requires explicit POST intent and RPC credentials; a read ticket alone cannot authorize authenticated mutations. Only the
+`ticket` query parameter is accepted on these routes; arbitrary path arguments
 remain rejected. Treat playback URLs as temporary access links: they may be handed
 to a cast device and should not be shared or logged by an added proxy. The service
 has no access logger or analytics and returns `Referrer-Policy: no-referrer`.
@@ -119,18 +121,53 @@ piece polls RPC, every 500 ms, with a 30-second per-gap deadline. Disconnecting
 cancels that wait; a timeout terminates the response instead of returning zeros.
 Unexpected truncation or changed metadata also terminates the stream.
 
-This is not a second torrent engine. It cannot demand an arbitrary missing piece
-without changing Transmission's torrent-wide sequential cursor. Play selects the
-file's starting piece; subsequent byte-range seeks wait for available pieces.
-Concurrent Play operations on the same torrent share Transmission's single
-cursor. MP4 metadata at the end can delay startup. The frontend implements playback positions and its watching UI; arbitrary missing-piece seek prioritization and container indexing are not provided by this daemon.
+Play selects the file's starting piece. Each ticket tracks only its currently
+blocked native range requests, removed when data becomes available or the reader
+disconnects. While buffering, the frontend sends explicit priority POSTs. The
+newest pending request takes precedence so MP4 end metadata, seeks and resumes
+can obtain the pieces they need; once that request finishes, earlier pending
+playback demand becomes eligible again. An unchanged cursor is not rewritten.
+Control requests do not consume the four media slots. Healthy playback and an
+idle daemon perform no priority polling. A confirmed missing-piece wait keeps
+its stream rather than restarting every eight seconds; actual transport failures
+have bounded recovery, with renewed progress permitting further recovery.
+
+This uses Transmission's existing torrent-wide sequential cursor, not a second
+torrent engine or per-reader piece deadlines. Concurrent players of the same
+torrent still share that cursor. Pieces need available peers and sufficient
+download speed; a percentage downloaded does not establish that the next range
+is present. There is no transcoding or container rewriting.
+
+## Subtitle files
+
+The manifest discovers `.srt` and `.vtt` files in the selected video's torrent,
+in the same directory, with the same filename stem and an optional language or
+variant suffix: `Episode 01.en.srt` matches `Episode 01.mp4`. Other episodes,
+images, unrelated text and filesystem paths cannot be requested through this
+route. Discovery is bounded to sixteen tracks. Matching tracks are marked wanted
+alongside the video; their existing file priority is retained.
+
+Conversion runs on demand in the bounded disk workers, after every covering piece
+is verified. UTF-8 and BOM-marked UTF-16 are supported; other encodings are rejected.
+Source size is capped at 512 KiB, converted output at 1 MiB and cue count at 10,000,
+with per-cue line limits. Only timing, text, basic bold/italic/underline tags and
+safe entities survive conversion. WebVTT style/region blocks and layout settings
+are discarded. No stylesheets, HTML rendering or external resources are accepted.
+
+The frontend uses native browser text tracks, fetching a bounded WebVTT Blob only
+after the user selects a track. Missing subtitles retry while selected; switching
+off, changing files or closing aborts pending work and revokes Blob URLs. Language
+names use `Intl.DisplayNames` when available with a plain-label fallback. Embedded
+subtitle formats still depend on native browser support; ASS styling, subtitle
+offset editing and automatic character-set detection are not provided.
 
 ## Security boundary
 
 - An existing, RPC-listed torrent and file index are mandatory. Only MP4/M4V,
   MOV, MKV, WebM, AVI and MPEG-TS extensions are accepted, with a matching
   recognized container header read from verified bytes. JSON, torrent metainfo,
-  resume files, subtitles, HTML and arbitrary downloads have no serving route.
+  resume files, images, HTML and arbitrary downloads have no serving route. The
+  separate subtitle route serves only the bounded, sanitized matching tracks above.
 - Container identification is a bounded signature check, **not** a full demuxer,
   codec validator or malware scanner. A malformed or audio-only container with a
   misleading video extension may pass identification; this server does not
