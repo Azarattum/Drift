@@ -3543,3 +3543,23 @@ input[type='number']::-webkit-outer-spin-button {
   font-size: 12px;
   margin-left: 6px;
 }
+
+.context-menu > .priority-control {
+  margin: 0 3px 10px;
+  min-height: 38px;
+}
+.context-menu > .priority-control button {
+  min-height: 32px;
+}
+.context-menu > .priority-control + hr {
+  margin-top: 0;
+}
+@media (max-width: 760px) {
+  .context-menu > .priority-control {
+    padding: 2px;
+    min-height: 48px;
+  }
+  .context-menu > .priority-control button {
+    min-height: 44px;
+  }
+}

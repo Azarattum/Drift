@@ -865,7 +865,7 @@
       ><Copy size={15} />Copy info hash</button
     >
     <hr />
-    <div class="menu-caption">Bandwidth priority</div>
+    <div class="menu-caption">Priority</div>
     <PriorityControl
       label="Bandwidth priority"
       value={actionTorrents.every(
