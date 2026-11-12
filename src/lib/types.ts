@@ -77,5 +77,17 @@ export type Sample = { at: number; down: number; up: number };
 export type Filter = 'all' | 'downloading' | 'seeding' | 'paused' | 'complete' | 'attention';
 export type Capabilities = {
   version: number;
+  trackerVpn?: {
+    enabled: boolean;
+    available: boolean;
+    interface: string | null;
+    label: string;
+    heartbeat: number;
+    active: string[];
+    retrying: string[];
+    routes: Record<string, string[]>;
+    scope: 'udp-ipv4';
+    endpoints: number;
+  };
   fullSpeed: { enabled: boolean; label: string; heartbeat: number; active: string[] };
 };

@@ -411,6 +411,29 @@ export class Client {
       /* Error is shown in the toast. */
     }
   }
+  get trackerVpnAvailable() {
+    const vpn = this.capabilities?.trackerVpn;
+    return (
+      !!vpn?.enabled &&
+      typeof vpn.label === 'string' &&
+      Array.isArray(vpn.active) &&
+      Date.now() / 1000 - vpn.heartbeat < 12
+    );
+  }
+  async trackerVpn(t: Torrent) {
+    const vpn = this.capabilities?.trackerVpn;
+    if (!this.trackerVpnAvailable || !vpn) return;
+    try {
+      const r = await this.rpc.call('torrent-get', { ids: [t.id], fields: ['id', 'labels'] });
+      const current = r.torrents[0];
+      if (!current) return;
+      const labels = (current.labels || []).filter((label: string) => label !== vpn.label);
+      labels.push(vpn.label);
+      await this.action('torrent-set', [t.id], { labels });
+    } catch (e) {
+      this.toast(String(e));
+    }
+  }
   async fullSpeed(t: Torrent) {
     if (!this.fullSpeedAvailable) {
       this.toast('Full speed controller is unavailable');

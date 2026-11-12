@@ -1551,3 +1551,57 @@ test('torrent priority segmented control highlights and saves each mode', async 
       .toBeGreaterThan(0);
   }
 });
+
+test('retry failed trackers with VPN is conditional and preserves labels', async ({ page }) => {
+  const { torrents, calls } = await server(page);
+  torrents[0].labels = ['Linux', 'router:full-speed'];
+  torrents[0].trackerStats[0].announce = 'udp://tracker.example:1337/announce';
+  torrents[0].trackerStats[0].lastAnnounceSucceeded = false;
+  torrents[0].trackerStats[0].lastAnnounceTime = 1;
+  await page.getByTestId('torrent-row').first().click();
+  await page.getByRole('tab', { name: 'Trackers', exact: true }).click();
+  const retry = page.getByRole('button', { name: 'Retry failed with VPN', exact: true });
+  await expect(retry).toHaveCount(0);
+  await page.route('**/full-speed.json*', (route) =>
+    route.fulfill({
+      json: {
+        version: 1,
+        fullSpeed: {
+          enabled: true,
+          label: 'router:full-speed',
+          heartbeat: Date.now() / 1000,
+          active: [],
+        },
+        trackerVpn: {
+          enabled: true,
+          available: true,
+          interface: 'vpn-test',
+          label: 'router:tracker-vpn-retry',
+          heartbeat: Date.now() / 1000,
+          active: [],
+          retrying: [],
+          routes: {},
+          scope: 'udp-ipv4',
+          endpoints: 0,
+        },
+      },
+    }),
+  );
+  await expect(retry).toBeVisible({ timeout: 10000 });
+  await retry.click();
+  await expect
+    .poll(
+      () =>
+        calls
+          .filter(
+            (c) =>
+              c.method === 'torrent-set' &&
+              c.arguments.labels?.includes('router:tracker-vpn-retry'),
+          )
+          .at(-1)?.arguments.labels,
+    )
+    .toEqual(['Linux', 'router:full-speed', 'router:tracker-vpn-retry']);
+  await expect(retry).toBeDisabled();
+  for (const tracker of torrents[0].trackerStats) tracker.lastAnnounceSucceeded = true;
+  await expect(retry).toHaveCount(0, { timeout: 10000 });
+});

@@ -224,6 +224,7 @@
     ),
   );
   let label = $derived(client.capabilities?.fullSpeed.label || 'router:full-speed');
+  const trackerVpnLabel = 'router:tracker-vpn-retry';
   onMount(() => {
     const origin = document.querySelector<HTMLElement>('.torrent-row[aria-selected="true"]');
     if (mobile)
@@ -501,7 +502,7 @@
         </dl>
       </section>
       {#if (t.labels || []).some((x) => x !== label)}<div class="label-chips">
-          {#each (t.labels || []).filter((x) => x !== label) as tag}<button
+          {#each (t.labels || []).filter((x) => x !== label && x !== trackerVpnLabel) as tag}<button
               class="label-chip"
               onclick={() => {
                 client.labelFilter = tag;
@@ -555,7 +556,9 @@
         <button
           class="text-button labels-action"
           onclick={() => {
-            labelsText = (t.labels || []).filter((x) => x !== label).join(', ');
+            labelsText = (t.labels || [])
+              .filter((x) => x !== label && x !== trackerVpnLabel)
+              .join(', ');
             labelEditing = true;
           }}><Tag size={16} />Edit labels</button
         >
@@ -756,6 +759,19 @@
       <div class="section-heading tracker-toolbar">
         <h3>Peer discovery</h3>
         <div class="section-actions">
+          {#if client.trackerVpnAvailable && t.trackerStats?.some((tracker) => tracker.announce.startsWith('udp://') && tracker.lastAnnounceTime > 0 && !tracker.lastAnnounceSucceeded)}
+            <button
+              class="icon-button"
+              aria-label="Retry failed with VPN"
+              title="Retry failed UDP trackers with VPN"
+              disabled={!client.online ||
+                !client.capabilities?.trackerVpn?.available ||
+                client.busy.has(t.id) ||
+                client.capabilities?.trackerVpn?.retrying?.includes(t.hashString) ||
+                t.labels.includes(trackerVpnLabel)}
+              onclick={() => client.trackerVpn(t)}><ShieldCheck size={16} /></button
+            >
+          {/if}
           <button
             class="icon-button"
             aria-label="Reannounce torrent"
@@ -791,7 +807,13 @@
             <span class="status-dot" class:success={tracker.lastAnnounceSucceeded} class:failed
             ></span>
             <span class="tracker-copy">
-              <strong title={tracker.announce}>{tracker.host || tracker.announce}</strong>
+              <strong title={tracker.announce}
+                >{tracker.host || tracker.announce}
+                {#if client.capabilities?.trackerVpn?.routes?.[t.hashString]?.includes(tracker.announce)}<span
+                    class="tracker-route"
+                    title="This tracker succeeded through VPN"><ShieldCheck size={11} />VPN</span
+                  >{/if}
+              </strong>
               <span class="tracker-summary">
                 <span class:danger={failed} title={failed ? tracker.lastAnnounceResult : undefined}
                   >{tracker.announceState === 3
@@ -1083,10 +1105,11 @@
             labelsText
               .split(',')
               .map((x) => x.trim())
-              .filter((x) => x && x !== label),
+              .filter((x) => x && x !== label && x !== trackerVpnLabel),
           ),
         ];
         if (label && t.labels.includes(label)) labels.push(label);
+        if (t.labels.includes(trackerVpnLabel)) labels.push(trackerVpnLabel);
         await client.safeAction('torrent-set', [t.id], { labels });
         labelEditing = false;
       }}

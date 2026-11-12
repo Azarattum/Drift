@@ -3534,3 +3534,12 @@ input[type='number']::-webkit-outer-spin-button {
   display: grid;
   gap: 8px;
 }
+
+.tracker-route {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--blue);
+  font-size: 12px;
+  margin-left: 6px;
+}

@@ -1,6 +1,7 @@
 // Reconcile the Full speed label with Transmission settings. Runs as root from
 // transmission-yield; the browser never gets a privileged endpoint or shell.
 import * as fs from 'fs';
+import { reconcile as trackerRouting } from './transmission-trackers.uc';
 
 const LABEL = 'router:full-speed';
 const STATE_DIR = '/home/.transmission-priority';
@@ -86,7 +87,7 @@ function save() {
 }
 
 let fields = [ 'id', 'hashString', 'labels', 'status', 'percentDone', 'error',
-    'metadataPercentComplete', 'rateDownload', 'rateUpload', ...SETTINGS ];
+    'metadataPercentComplete', 'rateDownload', 'rateUpload', 'trackerStats', ...SETTINGS ];
 let torrents = rpc('torrent-get', { fields: fields }).torrents;
 let current = {};
 for (let torrent in torrents) current[torrent.hashString] = torrent;
@@ -211,9 +212,11 @@ print(active, '\n');
 let web = trim(command('uci -q get transmission.@transmission[0].web_home'));
 if (web && fs.stat(web)) {
     let file = web + '/full-speed.json';
+    let trackerVpn = null;
+    try { trackerVpn = trackerRouting(torrents, rpc); } catch (e) { log('Tracker VPN: ' + e); }
     let capabilities = { version: 1, fullSpeed: {
         enabled: true, label: LABEL, heartbeat: time(), active: keys(state.torrents)
-    } };
+    }, trackerVpn: trackerVpn };
     if (fs.writefile(file + '.tmp', sprintf('%J\n', capabilities))) {
         fs.chmod(file + '.tmp', 0644);
         fs.rename(file + '.tmp', file);
