@@ -4389,3 +4389,99 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   height: 14px;
   flex-shrink: 0;
 }
+
+.mobile-row-speeds {
+  display: none;
+}
+@media (max-width: 900px) {
+  .torrent-list {
+    padding: 8px 12px;
+  }
+  .torrent-row {
+    grid-template-columns: 28px minmax(0, 1fr) 44px;
+    padding: 14px 8px;
+  }
+  .row-actions {
+    grid-column: 3;
+  }
+  .row-metrics {
+    display: none;
+  }
+  .torrent-subline {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 80px;
+    gap: 6px;
+  }
+  .torrent-subline > .stage {
+    grid-column: 1;
+    grid-row: 1;
+    font-size: 12px;
+  }
+  .torrent-subline > .mobile-row-speeds {
+    display: flex;
+    grid-column: 2;
+    grid-row: 1;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .torrent-subline > .size {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .torrent-subline > .torrent-priority,
+  .torrent-subline > .full-indicator {
+    grid-column: 1 / -1;
+  }
+  .row-progress,
+  .torrent-row::after {
+    left: 44px;
+    right: 8px;
+  }
+  .inspector-tabs {
+    --tab-inset: 16px;
+    padding-inline: 16px;
+  }
+}
+@media (max-width: 600px) {
+  .stage-heading {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .stage-heading > b {
+    margin-left: auto;
+  }
+  .stage-actions {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+  .stage-actions .stage-control {
+    min-width: 44px;
+  }
+  .watch-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 128px;
+    align-items: center;
+  }
+  .watch-heading > div {
+    grid-column: 1;
+  }
+  .watch-header-status {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .watch-header-status .watch-download {
+    max-width: none;
+    white-space: nowrap;
+  }
+  .watch-header-status .text-button {
+    min-height: 44px;
+  }
+  .watch-files-button {
+    grid-column: 2;
+    justify-self: end;
+  }
+}

@@ -115,7 +115,15 @@
           class="status-dot"
           class:pulse={s.active && t.rateDownload === 0 && t.rateUpload === 0}
         ></span>{s.label}</span
-      ><span class="size muted"
+      ><span
+        class="mobile-row-speeds"
+        class:download={t.rateDownload > 0}
+        class:upload={t.rateDownload <= 0 && t.rateUpload > 0}
+      >
+        {#if t.rateDownload > 0}<ArrowDown size={14} />{speed(
+            t.rateDownload,
+          )}{:else if t.rateUpload > 0}<ArrowUp size={14} />{speed(t.rateUpload)}{/if}
+      </span><span class="size muted"
         >{t.errorString || s.tone === 'amber' || s.tone === 'red'
           ? t.errorString || s.detail
           : t.status === 2

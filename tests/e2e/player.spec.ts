@@ -361,3 +361,19 @@ test('player fits available dialog height without scrolling at short viewport si
     expect(controls!.y + controls!.height).toBeLessThanOrEqual(viewport.height);
   }
 });
+
+test('mobile player keeps download status on one line and centered beside file info', async ({
+  page,
+}) => {
+  await setup(page);
+  await expect(page.locator('.drift-player video')).toBeVisible();
+  for (const width of [320, 360, 390, 430]) {
+    await page.setViewportSize({ width, height: 760 });
+    const status = await page.locator('.watch-header-status').boundingBox();
+    const info = await page.locator('.watch-heading > div').boundingBox();
+    const download = await page.locator('.watch-download').boundingBox();
+    expect(download!.height).toBeLessThanOrEqual(21);
+    expect(Math.abs(status!.y + status!.height / 2 - info!.y - info!.height / 2)).toBeLessThan(2);
+    expect(status!.x + status!.width).toBeLessThanOrEqual(width - 16);
+  }
+});

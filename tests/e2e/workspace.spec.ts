@@ -1598,3 +1598,34 @@ test('download queue is hidden with only one unfinished torrent', async ({ page 
   const queue = page.getByRole('group', { name: 'Download queue', exact: true });
   await expect(queue).toHaveCount(0);
 });
+
+test('mobile rows stay stable as rates change and inspector actions keep their inset', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const { torrents } = await server(page);
+  for (const width of [320, 360, 390, 430]) {
+    await page.setViewportSize({ width, height: 760 });
+    const row = page.getByTestId('torrent-row').first();
+    const before = await row.locator('.torrent-name').boundingBox();
+    torrents[0].rateDownload = 9876543;
+    await expect(row.locator('.mobile-row-speeds')).toContainText('9.4 MB/s');
+    const after = await row.locator('.torrent-name').boundingBox();
+    expect(after!.x).toBe(before!.x);
+    expect(after!.width).toBe(before!.width);
+    const menu = await row.locator('.row-menu').boundingBox();
+    expect(menu!.x + menu!.width).toBeLessThanOrEqual(width - 16);
+    await row.click();
+    const heading = await page.locator('.stage-heading h3').boundingBox();
+    const actions = await page.locator('.stage-actions').boundingBox();
+    expect(actions!.y).toBeGreaterThanOrEqual(heading!.y + heading!.height);
+    expect(actions!.x).toBeGreaterThanOrEqual(16);
+    expect(actions!.x + actions!.width).toBeLessThanOrEqual(width - 16);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.getByRole('button', { name: 'Close inspector', exact: true }).click();
+    torrents[0].rateDownload = 123;
+    await expect(row.locator('.mobile-row-speeds')).toContainText('123 B/s');
+  }
+});
