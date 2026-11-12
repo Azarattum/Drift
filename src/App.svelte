@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ArrowDownWideNarrow, ArrowUpNarrowWide } from '@lucide/svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
-  import PriorityControl from './components/PriorityControl.svelte';
+  import QueueControl from './components/QueueControl.svelte';
   import { preference, savePreference } from './lib/preferences';
   import { motion } from './lib/motion';
   import { magnetLink } from './lib/clipboard';
@@ -860,20 +860,10 @@
     ><button role="menuitem" onclick={() => copy('hashString')}
       ><Copy size={15} />Copy info hash</button
     >
-    <hr />
-    <PriorityControl
-      label="Bandwidth priority"
-      value={actionTorrents.every(
-        (t) => t.bandwidthPriority === actionTorrents[0]?.bandwidthPriority,
-      )
-        ? actionTorrents[0]?.bandwidthPriority
-        : undefined}
-      disabled={!client.online}
-      onchange={(value) => {
-        for (const torrent of actionTorrents)
-          client.queueOption(torrent.id, 'bandwidthPriority', value, 0);
-      }}
-    />
+    {#if actionTorrents.length && actionTorrents.every((t) => t.percentDone < 1)}
+      <hr />
+      <QueueControl torrents={actionTorrents} move={(method) => run(method)} />
+    {/if}
     <hr />
     <button role="menuitem" class="danger" onclick={requestRemove}
       ><Trash2 size={15} />Remove… <kbd>⌫</kbd></button

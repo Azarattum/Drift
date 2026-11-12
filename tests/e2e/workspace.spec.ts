@@ -1283,7 +1283,10 @@ test('transfer options auto-save only valid changed fields and survive navigatio
   await page.locator('.inspector').waitFor({ state: 'detached' });
   await page.getByTestId('torrent-row').nth(2).click();
   await page.getByRole('tab', { name: 'Options', exact: true }).click();
-  await page.locator('select[name=bandwidthPriority]').selectOption('1');
+  await page
+    .getByRole('group', { name: 'Download priority', exact: true })
+    .getByRole('button', { name: 'High', exact: true })
+    .click();
   await expect
     .poll(() =>
       calls.some(
@@ -1518,52 +1521,18 @@ test('peer headers sort in both directions and availability is vertically center
   ).toBeLessThan(2);
 });
 
-test('torrent priority occupies one menu slot without queue actions', async ({ page }) => {
-  const { torrents, calls } = await server(page);
-  torrents[0].bandwidthPriority = 1;
-  torrents[1].bandwidthPriority = -1;
-  await expect(page.getByTestId('torrent-row').first()).toContainText('High priority');
-  await expect(page.getByTestId('torrent-row').nth(1)).toContainText('Low priority');
-  await expect(page.getByTestId('torrent-row').nth(2).locator('.torrent-priority')).toHaveCount(0);
+test('queue menu shows positions and moves unfinished downloads only', async ({ page }) => {
+  const { calls, torrents } = await server(page);
   await page.getByTestId('torrent-row').first().click({ button: 'right' });
-  await expect(
-    page.locator('.menu-caption').filter({ hasText: /Queue order|Priority/ }),
-  ).toHaveCount(0);
-  for (const name of ['Move to top', 'Move up', 'Move down', 'Move to bottom'])
-    await expect(page.getByRole('menuitem', { name, exact: true })).toHaveCount(0);
-  const control = await page.getByRole('group', { name: 'Bandwidth priority' }).boundingBox();
-  const regular = await page
-    .getByRole('menuitem', { name: 'Copy info hash', exact: true })
-    .boundingBox();
-  expect(control!.height).toBe(regular!.height);
-});
-
-test('torrent priority segmented control highlights and saves each mode', async ({ page }) => {
-  const { calls } = await server(page);
-  await page.getByTestId('torrent-row').first().click({ button: 'right' });
-  const control = page.getByRole('group', { name: 'Bandwidth priority' });
-  await expect(control.getByRole('button', { name: 'Normal', exact: true })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
-  for (const [name, value] of [
-    ['High', 1],
-    ['Low', -1],
-    ['Normal', 0],
-  ] as const) {
-    await control.getByRole('button', { name, exact: true }).click();
-    await expect(control.getByRole('button', { name, exact: true })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-    await expect
-      .poll(
-        () =>
-          calls.filter((c) => c.method === 'torrent-set' && c.arguments.bandwidthPriority === value)
-            .length,
-      )
-      .toBeGreaterThan(0);
-  }
+  const queue = page.getByRole('group', { name: 'Download queue', exact: true });
+  await expect(queue).toContainText(`#${torrents[0].queuePosition + 1}`);
+  await expect(page.getByRole('group', { name: 'Bandwidth priority' })).toHaveCount(0);
+  await queue.getByRole('button', { name: 'Move up', exact: true }).click();
+  await expect
+    .poll(() => calls.find((c) => c.method === 'queue-move-up')?.arguments.ids)
+    .toEqual([1]);
+  await page.getByTestId('torrent-row').last().click({ button: 'right' });
+  await expect(queue).toHaveCount(0);
 });
 
 test('retry failed trackers with VPN is conditional and preserves labels', async ({ page }) => {
