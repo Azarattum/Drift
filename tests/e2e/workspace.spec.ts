@@ -20,6 +20,7 @@ async function server(
     waitForReady?: boolean;
     portDelay?: number;
     portOpen?: boolean;
+    rpcVersion?: number;
   } = {},
 ) {
   let failures = options.startupFailures || 0;
@@ -63,7 +64,13 @@ async function server(
     const targets = torrents.filter((t) => !args.ids || args.ids.includes(t.id));
     switch (body.method) {
       case 'torrent-get':
-        result = { torrents: targets };
+        result = {
+          torrents: targets.map((t) => {
+            const copy = { ...t };
+            if ((options.rpcVersion ?? 19) < 18) delete copy.sequential_download;
+            return copy;
+          }),
+        };
         break;
       case 'session-stats':
         result = {
@@ -75,7 +82,7 @@ async function server(
       case 'session-get':
         result = {
           version: '4.1.3',
-          'rpc-version': 19,
+          'rpc-version': options.rpcVersion ?? 19,
           'download-dir': '/data/Downloads',
           'download-dir-free-space': 324000000000,
           'peer-port': 51413,
@@ -89,6 +96,19 @@ async function server(
         break;
       case 'torrent-set':
         for (const t of targets) Object.assign(t, args);
+        break;
+      case 'torrent-rename-path':
+        for (const t of targets) {
+          const root = t.files?.[0]?.name.split('/')[0];
+          t.files = t.files?.map((f) => ({
+            ...f,
+            name:
+              f.name === args.path || f.name.startsWith(`${args.path}/`)
+                ? args.name + f.name.slice(args.path.length)
+                : f.name,
+          }));
+          if (root === args.path) t.name = args.name;
+        }
         break;
       case 'torrent-stop':
         for (const t of targets) t.status = 0;
@@ -1032,7 +1052,11 @@ test('dots remain visible and anchored without opening details or changing selec
   await expect(trigger.locator('..')).toHaveCSS('border-top-style', 'none');
   expect(await trigger.boundingBox()).toEqual(box);
   const menu = await page.getByRole('menu').boundingBox();
-  expect(menu!.y).toBeGreaterThanOrEqual(box!.y + box!.height);
+  expect(
+    menu!.y >= box!.y + box!.height + 5 ||
+      menu!.y + menu!.height <= box!.y - 5 ||
+      menu!.x + menu!.width <= box!.x - 5,
+  ).toBe(true);
   await page.getByRole('menuitem', { name: /^Pause download/ }).click();
   await expect
     .poll(() => calls.find((c) => c.method === 'torrent-stop')?.arguments.ids)
@@ -1090,4 +1114,110 @@ test('file right-click changes priority directly and phone scrollers fit their v
         getComputedStyle(el).userSelect,
     );
   expect(userSelect).toBe('none');
+});
+
+test('torrent rename uses its real root path and refreshes folder and single-file names', async ({
+  page,
+}) => {
+  const { torrents, calls } = await server(page);
+  const row = page.getByTestId('torrent-row').first();
+  await row.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Rename…', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Rename torrent', exact: true });
+  const name = dialog.getByRole('textbox', { name: 'Name', exact: true });
+  await expect(name).toHaveValue('Ubuntu 24.04');
+  await name.fill('../wrong');
+  await expect(dialog.getByRole('button', { name: 'Rename', exact: true })).toBeDisabled();
+  await name.fill('Ubuntu library');
+  await dialog.getByRole('button', { name: 'Rename', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(row.locator('.torrent-name')).toHaveText('Ubuntu library');
+  expect(calls.find((c) => c.method === 'torrent-rename-path')?.arguments).toEqual({
+    ids: [1],
+    path: 'Ubuntu 24.04',
+    name: 'Ubuntu library',
+  });
+  expect(torrents[0].files?.map((f) => f.name)).toEqual([
+    'Ubuntu library/desktop.iso',
+    'Ubuntu library/Docs/README.txt',
+    'Ubuntu library/Docs/SHA256SUMS',
+  ]);
+  torrents[0].files = [{ name: 'movie.mkv', length: 6000000000, bytesCompleted: 2600000000 }];
+  await row.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Rename…', exact: true }).click();
+  await expect(name).toHaveValue('movie.mkv');
+  await name.fill('Movie.mkv');
+  await dialog.getByRole('button', { name: 'Rename', exact: true }).click();
+  await expect(row.locator('.torrent-name')).toHaveText('Movie.mkv');
+  expect(calls.filter((c) => c.method === 'torrent-rename-path').at(-1)?.arguments).toEqual({
+    ids: [1],
+    path: 'movie.mkv',
+    name: 'Movie.mkv',
+  });
+  await page.getByTestId('torrent-row').nth(1).click({ button: 'right' });
+  await expect(page.getByRole('menuitem', { name: 'Rename…', exact: true })).toHaveCount(0);
+});
+
+test('a rejected torrent rename stays open for correction', async ({ page }) => {
+  await server(page);
+  await page.route(/\/rpc$/, async (route) => {
+    const body = route.request().postDataJSON();
+    if (body.method === 'torrent-rename-path' && body.arguments.name === 'Existing folder')
+      await route.fulfill({ json: { result: 'File exists', arguments: {} } });
+    else await route.fallback();
+  });
+  await page.getByTestId('torrent-row').first().click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Rename…', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Rename torrent', exact: true });
+  const name = dialog.getByRole('textbox', { name: 'Name', exact: true });
+  await expect(name).toBeEnabled();
+  await name.fill('Existing folder');
+  await dialog.getByRole('button', { name: 'Rename', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toHaveText('File exists');
+  await expect(name).toHaveValue('Existing folder');
+  await name.fill('Renamed folder');
+  await dialog.getByRole('button', { name: 'Rename', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+});
+
+test('sequential download saves and reloads the backend mode and stays hidden on older daemons', async ({
+  page,
+}) => {
+  const { calls } = await server(page);
+  const openOptions = async () => {
+    await page.getByTestId('torrent-row').first().click();
+    await page.getByRole('tab', { name: 'Options', exact: true }).click();
+  };
+  await openOptions();
+  const sequential = page.getByRole('switch', { name: /Sequential download/ });
+  await expect(sequential).not.toBeChecked();
+  await sequential.check();
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect
+    .poll(
+      () =>
+        calls.find((c) => c.method === 'torrent-set' && c.arguments.sequential_download === true)
+          ?.arguments.ids,
+    )
+    .toEqual([1]);
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await page.locator('.inspector').waitFor({ state: 'detached' });
+  await page.setViewportSize({ width: 375, height: 667 });
+  await openOptions();
+  await expect(sequential).toBeChecked();
+  await sequential.uncheck();
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect
+    .poll(() =>
+      calls.some((c) => c.method === 'torrent-set' && c.arguments.sequential_download === false),
+    )
+    .toBe(true);
+  const older = await server(page, true, { rpcVersion: 17 });
+  await openOptions();
+  await expect(sequential).toHaveCount(0);
+  expect(
+    older.calls
+      .filter((c) => c.method === 'torrent-get')
+      .every((c) => !c.arguments.fields.includes('sequential_download')),
+  ).toBe(true);
 });

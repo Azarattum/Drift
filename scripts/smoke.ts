@@ -5,6 +5,8 @@ import { Transmission } from '../src/lib/rpc';
 const web = Bun.argv[2];
 if (!web) throw new Error('Usage: bun scripts/smoke.ts http://host:9091/transmission/web/');
 const rpc = new Transmission(new URL('../rpc', web).href);
+const session = await rpc.call('session-get', { fields: ['rpc-version'] });
+const sequentialSupported = Number(session['rpc-version']) >= 18;
 const capability = await fetch(new URL('full-speed.json', web))
   .then((r) => (r.ok ? r.json() : null))
   .catch(() => null);
@@ -66,7 +68,15 @@ const get = async () =>
   (
     await rpc.call('torrent-get', {
       ids: [id],
-      fields: ['id', 'name', 'labels', 'status', ...Object.keys(original)],
+      fields: [
+        'id',
+        'name',
+        'files',
+        'labels',
+        'status',
+        ...Object.keys(original),
+        ...(sequentialSupported ? ['sequential_download'] : []),
+      ],
     })
   ).torrents[0];
 const browser = await chromium.launch({ headless: true });
@@ -105,6 +115,41 @@ try {
       'PASS: real Full speed control and controller acknowledgement; previous limits restored',
     );
   } else console.log('INFO: no optional Full speed capability advertised');
+  if (sequentialSupported) {
+    await row.click();
+    await page.getByRole('tab', { name: 'Options', exact: true }).click();
+    const sequential = page.getByRole('switch', { name: /Sequential download/ });
+    await sequential.check();
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await until(
+      async () => (await get()).sequential_download === true,
+      'Sequential mode not applied',
+    );
+    await sequential.uncheck();
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await until(
+      async () => (await get()).sequential_download === false,
+      'Normal mode not restored',
+    );
+    await page.getByRole('button', { name: 'Close inspector' }).click();
+    await page.locator('.inspector').waitFor({ state: 'detached' });
+    console.log('PASS: real sequential mode can be enabled and disabled through Options');
+  }
+  if (Number(session['rpc-version']) >= 15) {
+    await row.hover();
+    await row.getByRole('button', { name: `Actions for ${name}`, exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Rename…', exact: true }).click();
+    const renamed = name.replace('.txt', '-renamed.txt');
+    const dialog = page.getByRole('dialog', { name: 'Rename torrent', exact: true });
+    await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill(renamed);
+    await dialog.getByRole('button', { name: 'Rename', exact: true }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await until(async () => (await get()).name === renamed, 'Torrent name not updated');
+    if ((await get()).files[0]?.name !== renamed) throw new Error('Root filename not updated');
+    await page.getByRole('textbox', { name: 'Search transfers' }).fill(renamed);
+    await page.getByTestId('torrent-row').filter({ hasText: renamed }).waitFor();
+    console.log('PASS: real torrent rename updates the torrent name, root path, and displayed row');
+  }
   await page.setViewportSize({ width: 390, height: 844 });
   if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth))
     throw new Error('Mobile overflow');

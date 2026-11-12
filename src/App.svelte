@@ -39,6 +39,7 @@
     WifiOff,
     MoreHorizontal,
     Pause,
+    Pencil,
     Play,
     Plus,
     RefreshCw,
@@ -58,9 +59,10 @@
   import SpeedGraph from './components/SpeedGraph.svelte';
   import Inspector from './components/Inspector.svelte';
   import Modal from './components/Modal.svelte';
+  import RenameTorrent from './components/RenameTorrent.svelte';
 
   let dragging = $state(false);
-  let modal = $state<null | 'add' | 'remove' | 'move' | 'settings'>(null);
+  let modal = $state<null | 'add' | 'remove' | 'move' | 'rename' | 'settings'>(null);
   let settingsTab = $state('Connection');
   let mobile = $state(matchMedia('(max-width: 900px)').matches);
   let mobileSection = $state<'transfers' | 'activity' | 'settings'>('transfers');
@@ -69,6 +71,7 @@
   let filterSheet = $state(false);
   let queryInput = $state<HTMLInputElement>();
   let context = $state<{ x: number; y: number; t: Torrent } | null>(null);
+  let renameTorrent = $state<Torrent | null>(null);
   let addText = $state(''),
     addDir = $state(''),
     addPaused = $state(false),
@@ -189,26 +192,23 @@
       if (context && menu && !mobile) {
         const bounds = menu.getBoundingClientRect();
         const anchored = menuTrigger?.classList.contains('row-menu') && rect;
+        let x = context.x;
+        let y = context.y;
+        if (anchored) {
+          const below = innerHeight - rect.bottom - 14;
+          const above = rect.top - 14;
+          x = rect.right - bounds.width;
+          if (bounds.height > Math.max(below, above)) {
+            x = rect.left - bounds.width - 6;
+            y = rect.top;
+          } else {
+            y = bounds.height <= below ? rect.bottom + 6 : rect.top - bounds.height - 6;
+          }
+        }
         context = {
           ...context,
-          x: Math.max(
-            8,
-            Math.min(
-              anchored ? rect.right - bounds.width : context.x,
-              innerWidth - bounds.width - 8,
-            ),
-          ),
-          y: Math.max(
-            8,
-            Math.min(
-              anchored
-                ? rect.bottom + 6 + bounds.height <= innerHeight - 8
-                  ? rect.bottom + 6
-                  : rect.top - bounds.height - 6
-                : context.y,
-              innerHeight - bounds.height - 8,
-            ),
-          ),
+          x: Math.max(8, Math.min(x, innerWidth - bounds.width - 8)),
+          y: Math.max(8, Math.min(y, innerHeight - bounds.height - 8)),
         };
       }
       menu?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
@@ -868,7 +868,17 @@
       ><CheckCheck size={15} />Verify local files</button
     ><button role="menuitem" onclick={() => run('torrent-reannounce')}
       ><RefreshCw size={15} />Ask trackers for peers</button
-    ><button
+    >
+    {#if actionTorrents.length === 1 && context.t.metadataPercentComplete >= 1 && Number(client.session['rpc-version']) >= 15}<button
+        role="menuitem"
+        onclick={() => {
+          const target = context!.t;
+          closeMenu();
+          renameTorrent = target;
+          modal = 'rename';
+        }}><Pencil size={15} />Rename…</button
+      >{/if}
+    <button
       role="menuitem"
       onclick={() => {
         pendingTorrents = [...actionTorrents];
@@ -955,6 +965,13 @@
       </div>
     </form></Modal
   >{/if}
+{#if modal === 'rename' && renameTorrent}<RenameTorrent
+    torrent={renameTorrent}
+    close={() => {
+      modal = null;
+      renameTorrent = null;
+    }}
+  />{/if}
 {#if modal === 'remove'}<Modal
     title={`Remove ${pendingTorrents.length === 1 ? 'transfer' : `${pendingTorrents.length} transfers`}?`}
     close={() => (modal = null)}

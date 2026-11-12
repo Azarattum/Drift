@@ -202,7 +202,11 @@ export class Client {
     try {
       const r = await this.rpc.call('torrent-get', {
         ids: [id],
-        fields: [...overviewFields, ...detailsFields],
+        fields: [
+          ...overviewFields,
+          ...detailsFields,
+          ...(Number(this.session['rpc-version']) >= 18 ? ['sequential_download'] : []),
+        ],
       });
       if (this.selected.at(-1) === id) this.details = r.torrents[0] || null;
       this.lastDetail = Date.now();

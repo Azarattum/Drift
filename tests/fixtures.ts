@@ -81,6 +81,7 @@ export function torrent(overrides: Partial<Torrent> = {}): Torrent {
     seedRatioLimit: 2,
     seedIdleMode: 0,
     seedIdleLimit: 30,
+    sequential_download: false,
     trackerList: 'https://tracker.example.org/announce',
     pieceCount: 500,
     pieceSize: 1048576,

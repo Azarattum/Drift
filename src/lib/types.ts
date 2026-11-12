@@ -68,6 +68,7 @@ export interface Torrent {
   dateCreated?: number;
   pieceCount?: number;
   pieceSize?: number;
+  sequential_download?: boolean;
   [key: string]: any;
 }
 export type Sample = { at: number; down: number; up: number };

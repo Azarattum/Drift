@@ -210,6 +210,10 @@
       if (scrollPane) scrollPane.scrollTop = 0;
     }
   });
+  $effect(() => {
+    if (typeof t.sequential_download === 'boolean' && options.sequential_download === undefined)
+      options.sequential_download = t.sequential_download;
+  });
   const toggleFolder = (path: string) => {
     collapsed = new Set(collapsed);
     if (collapsed.has(path)) collapsed.delete(path);
@@ -711,6 +715,22 @@
           }
         }}
       >
+        {#if typeof t.sequential_download === 'boolean'}<section class="settings-group">
+            <h3>Downloading</h3>
+            <div class="settings-card">
+              <label class="setting-row"
+                ><span class="setting-copy"
+                  ><b>Sequential download</b><small
+                    >Download pieces in order for video playback.</small
+                  ></span
+                ><input
+                  type="checkbox"
+                  role="switch"
+                  bind:checked={options.sequential_download}
+                /></label
+              >
+            </div>
+          </section>{/if}
         <section class="settings-group">
           <h3>Bandwidth</h3>
           <div class="settings-card">

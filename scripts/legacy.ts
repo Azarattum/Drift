@@ -176,8 +176,23 @@ try {
   await page.locator('[aria-label="Inspect peer 192.0.2.1 port 51413"]').click();
   assert((await page.locator('.peer-card').textContent())?.includes('192.0.2.1'));
   await audit();
+  await page.locator('[role="tab"]').nth(4).click();
+  await page.locator('label', { hasText: 'Sequential download' }).locator('input').check();
+  await page.locator('[aria-label="Save changes"]').click();
+  await page.waitForTimeout(250);
+  assert(calls.some((c) => c.method === 'torrent-set' && c.arguments.sequential_download === true));
+  await audit();
   await page.locator('[aria-label="Close inspector"]').click();
   await page.locator('.inspector').waitFor({ state: 'detached' });
+  await page.locator('.row-menu').first().tap();
+  await page.locator('[role="menuitem"]', { hasText: 'Rename…' }).click();
+  await page.locator('dialog[open] input').waitFor({ state: 'visible' });
+  await page.waitForFunction(
+    () => (document.querySelector('dialog input') as HTMLInputElement)?.value === 'Ubuntu 24.04',
+  );
+  await audit();
+  await page.locator('[aria-label="Close dialog"]').click();
+  await page.locator('dialog').waitFor({ state: 'detached' });
   for (let n = 0; n < 3; n++) {
     await page.locator('.mobile-add').click();
     await page.locator('dialog[open]').waitFor();
@@ -219,7 +234,7 @@ try {
   await audit();
   assert.deepEqual(errors, [], 'No browser runtime errors');
   console.log(
-    'PASS: WebKit 15.4 production bundle at iPhone 8 size: RPC, graph, files, peers, repeated dialogs, inert isolation, touch targets, and theme',
+    'PASS: WebKit 15.4 production bundle at iPhone 8 size: RPC, graph, files, peers, sequential mode, rename dialog, repeated dialogs, inert isolation, touch targets, and theme',
   );
 } finally {
   await browser.close();
