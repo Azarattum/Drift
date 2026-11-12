@@ -1314,6 +1314,13 @@ input[role='switch']:checked::after {
   align-items: center;
   gap: 7px;
 }
+.file-toolbar::before {
+  content: '';
+  position: absolute;
+  inset: -24px -24px 0;
+  z-index: -1;
+  background: var(--surface);
+}
 .file-toolbar .input {
   flex: 1;
   min-width: 0;
@@ -1330,6 +1337,7 @@ input[role='switch']:checked::after {
   margin: 14px 0 10px;
 }
 .file-node {
+  scroll-margin-top: 72px;
   display: grid;
   grid-template-columns: 28px minmax(50px, 1fr) 90px 32px;
   align-items: center;
