@@ -24,9 +24,10 @@ export class Transmission {
     const deadline = requestDeadline(12000, signal);
     try {
       for (let attempt = 0; attempt < 3; attempt++) {
+        const requestToken = this.token;
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
-          'X-Transmission-Session-Id': this.token,
+          'X-Transmission-Session-Id': requestToken,
         };
         if (this.username)
           headers.Authorization = `Basic ${btoa(unescape(encodeURIComponent(`${this.username}:${this.password}`)))}`;
@@ -45,7 +46,7 @@ export class Transmission {
         }
         if (response.status === 409) {
           const next = response.headers.get('X-Transmission-Session-Id');
-          if (!next || next === this.token)
+          if (!next || next === requestToken)
             throw new RpcError('Cannot negotiate an RPC session. Check proxy headers.', 409);
           this.token = next;
           continue;
