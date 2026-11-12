@@ -36,3 +36,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # browser test artifacts
 test-results
 playwright-report
+
+# Optional Rust router companion (not part of the frontend bundle)
+integrations/openwrt/drift-stream/target/
+integrations/openwrt/drift-stream/dist/

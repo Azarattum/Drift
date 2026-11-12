@@ -1,0 +1,79 @@
+{
+  "fixtureBytes": 12890594,
+  "binaryBytes": 962432,
+  "idleStart": {
+    "ticks": 0,
+    "totalTicks": 73126940,
+    "detail": [
+      "VmHWM: 1032",
+      "VmRSS: 1032",
+      "Threads: 1",
+      "voluntary_ctxt_switches: 6",
+      "nonvoluntary_ctxt_switches: 3"
+    ]
+  },
+  "idleEnd": {
+    "ticks": 0,
+    "totalTicks": 73128972,
+    "detail": [
+      "VmHWM: 1032",
+      "VmRSS: 1032",
+      "Threads: 1",
+      "voluntary_ctxt_switches: 6",
+      "nonvoluntary_ctxt_switches: 3"
+    ]
+  },
+  "idleTicks": 0,
+  "trials": [
+    {
+      "concurrency": 1,
+      "bytes": 103124752,
+      "seconds": 2.0837798330000004,
+      "mibPerSecond": 47.19664995825115,
+      "cpuTicks": 88,
+      "machineTicks": 454,
+      "after": {
+        "ticks": 88,
+        "totalTicks": 73129476,
+        "detail": [
+          "VmHWM: 1180",
+          "VmRSS: 1044",
+          "Threads: 3",
+          "voluntary_ctxt_switches: 1452",
+          "nonvoluntary_ctxt_switches: 783"
+        ]
+      }
+    },
+    {
+      "concurrency": 4,
+      "bytes": 412499008,
+      "seconds": 6.240762458999998,
+      "mibPerSecond": 63.035520428331104,
+      "cpuTicks": 457,
+      "machineTicks": 1280,
+      "after": {
+        "ticks": 545,
+        "totalTicks": 73130803,
+        "detail": [
+          "VmHWM: 1436",
+          "VmRSS: 1040",
+          "Threads: 3",
+          "voluntary_ctxt_switches: 2926",
+          "nonvoluntary_ctxt_switches: 7200"
+        ]
+      }
+    }
+  ],
+  "paced": {
+    "targetBitsPerSecond": 20000000,
+    "bytes": 12890594,
+    "seconds": 5.405085292,
+    "cpuTicks": 9,
+    "machineTicks": 1074
+  },
+  "deniedRequests": [404, 400, 404],
+  "sparsePartWait": true,
+  "observedExitMs": 191.48274999999558,
+  "procdRestart": true,
+  "procdStop": true
+}

@@ -82,6 +82,14 @@ bun scripts/deploy.ts root@router.local /path/to/drift-dist
 
 Transmission 4.x is the primary target, tested live with 4.1.3. The client uses its legacy-compatible RPC API with 409 session negotiation. Older daemons may lack labels or tracker-list support; there is a legacy tracker-editing path. A future daemon that removes legacy RPC will need an adapter. Creating new torrent metainfo from local files is outside this remote client's scope.
 
+## Optional media companion
+
+An optional native media-serving companion is documented in
+[integrations/openwrt/drift-stream/README.md](integrations/openwrt/drift-stream/README.md).
+It is built and packaged independently from the static frontend and has no frontend
+runtime dependencies. It provides HTTP video delivery for future player integration;
+the web player is not implemented yet.
+
 ## Activity history
 
 Transmission's [RPC statistics](https://github.com/transmission/transmission/blob/4.0.5/docs/rpc-spec.md#42-session-statistics) provide current speeds and cumulative totals. They do not provide a timestamped speed history.
