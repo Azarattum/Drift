@@ -292,6 +292,17 @@
           : `${files.length || 'Finding'} video${files.length === 1 ? '' : 's'} · Choose a file to begin`}
       </p>
     </div>
+    {#if selected}<span class="watch-header-status">
+        <span class="watch-download" class:complete
+          >{#if complete}<CheckCircle2 size={15} /><span>Downloaded</span>{:else}<span
+              class="watch-live-dot"
+            ></span><span
+              >{percent(selected?.length ? downloaded / selected.length : 0)} downloaded</span
+            >{/if}</span
+        >{#if files[fileNumber]}<button class="text-button" onclick={() => watch(files[fileNumber])}
+            >Next video<Play size={13} /></button
+          >{/if}
+      </span>{/if}
     {#if files.length > 1 && selected}<button
         class="button secondary watch-files-button"
         aria-label="Show video files"
@@ -523,18 +534,6 @@
         <media-status-announcer></media-status-announcer>
       </media-container>
     </video-player>
-    <div class="watch-footer">
-      <span class="watch-download" class:complete
-        >{#if complete}<CheckCircle2 size={15} /><span>Downloaded</span>{:else}<span
-            class="watch-live-dot"
-          ></span><span
-            >{percent(selected?.length ? downloaded / selected.length : 0)} downloaded</span
-          >{/if}</span
-      ><span class="watch-saved"><Check size={14} />Remembers your place</span
-      >{#if files[fileNumber]}<button class="text-button" onclick={() => watch(files[fileNumber])}
-          >Next video<Play size={13} /></button
-        >{/if}
-    </div>
   {/if}
   {#if phase === 'choose' || listOpen}
     <section class="watch-library" aria-label="Video files">

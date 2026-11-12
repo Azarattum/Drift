@@ -4330,3 +4330,23 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
 .file-context-menu > .priority-control {
   margin-bottom: 8px;
 }
+
+.watch-header-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.watch-header-status .text-button {
+  min-height: 32px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .watch-header-status .watch-download {
+    max-width: 110px;
+  }
+}
