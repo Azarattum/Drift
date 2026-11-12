@@ -1,12 +1,18 @@
 <script lang="ts">
+  import { onMount, tick } from 'svelte';
   import { motion } from '../lib/motion';
   import {
     ChevronDown,
+    ChevronLeft,
     ChevronRight,
     Copy,
     ExternalLink,
     File,
     Folder,
+    FolderOpen,
+    MoreHorizontal,
+    List,
+    Network,
     Pause,
     Play,
     RefreshCw,
@@ -53,9 +59,18 @@
     return fly(node, { x: mobile ? 36 : 16, duration: motion(180) });
   }
   const optionsFormId = $props.id();
+  const tabsId = `${optionsFormId}-tabs`;
+  let panel: HTMLElement;
+  let scrollPane: HTMLDivElement;
   let tab = $state('Overview');
+  let fileFocus = $state('');
   let collapsed = $state(new Set<string>());
   let fileQuery = $state('');
+  let chosenPeer = $state<string | null>(null);
+  let peerView = $state<'list' | 'diagram'>('list');
+  $effect(() => {
+    if (tab && peerView && scrollPane) scrollPane.scrollTop = 0;
+  });
   let rename = $state<FileNode | null>(null);
   let renameValue = $state('');
   let trackerText = $state<string | null>(null);
@@ -75,6 +90,73 @@
     ),
   );
   let label = $derived(client.capabilities?.fullSpeed.label || 'router:full-speed');
+  onMount(() => {
+    const origin = document.querySelector<HTMLElement>('.torrent-row[aria-selected="true"]');
+    if (mobile)
+      panel.querySelector<HTMLElement>('.inspector-title h2')?.focus({ preventScroll: true });
+    return () => {
+      if (mobile && origin?.isConnected) origin.focus({ preventScroll: true });
+    };
+  });
+  $effect(() => {
+    if (!nodes.some((n) => n.path === fileFocus)) fileFocus = nodes[0]?.path || '';
+  });
+  async function focusFile(path: string) {
+    fileFocus = path;
+    await tick();
+    panel.querySelectorAll<HTMLElement>('.file-node').forEach((node) => {
+      if (node.dataset.path === path) node.focus({ preventScroll: false });
+    });
+  }
+  function fileKeys(e: KeyboardEvent, n: FileNode) {
+    if (e.target !== e.currentTarget) return;
+    const index = nodes.findIndex((x) => x.path === n.path);
+    if (
+      ['ArrowDown', 'ArrowUp', 'Home', 'End', 'ArrowLeft', 'ArrowRight', 'Enter', ' '].includes(
+        e.key,
+      )
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (e.key === 'ArrowDown') void focusFile(nodes[Math.min(nodes.length - 1, index + 1)].path);
+    if (e.key === 'ArrowUp') void focusFile(nodes[Math.max(0, index - 1)].path);
+    if (e.key === 'Home') void focusFile(nodes[0].path);
+    if (e.key === 'End') void focusFile(nodes.at(-1)!.path);
+    if (e.key === 'ArrowRight' && n.children.length) {
+      if (collapsed.has(n.path)) toggleFolder(n.path);
+      else void focusFile(n.children[0].path);
+    }
+    if (e.key === 'ArrowLeft') {
+      if (n.children.length && !collapsed.has(n.path)) toggleFolder(n.path);
+      else {
+        const parent = n.path.slice(0, n.path.lastIndexOf('/'));
+        if (nodes.some((x) => x.path === parent)) void focusFile(parent);
+      }
+    }
+    if (e.key === 'Enter') {
+      if (n.children.length) toggleFolder(n.path);
+      else fileOptions(n);
+    }
+    if (e.key === ' ')
+      void client.safeAction('torrent-set', [t.id], {
+        [checked(n) ? 'files-unwanted' : 'files-wanted']: n.ids,
+      });
+  }
+  const priority = (n: FileNode) =>
+    n.ids.every((i) => t.fileStats?.[i]?.priority === 1)
+      ? 1
+      : n.ids.every((i) => t.fileStats?.[i]?.priority === -1)
+        ? -1
+        : 0;
+  const setPriority = (n: FileNode, value: number) =>
+    client.safeAction('torrent-set', [t.id], {
+      [value === 1 ? 'priority-high' : value === -1 ? 'priority-low' : 'priority-normal']: n.ids,
+    });
+  function fileOptions(n: FileNode) {
+    rename = n;
+    renameValue = n.name;
+  }
   $effect(() => {
     if (optionsId !== t.id) {
       options = {
@@ -94,6 +176,8 @@
       trackerEditing = false;
       labelEditing = false;
       collapsed = new Set();
+      chosenPeer = null;
+      if (scrollPane) scrollPane.scrollTop = 0;
     }
   });
   const toggleFolder = (path: string) => {
@@ -134,6 +218,7 @@
 </script>
 
 <aside
+  bind:this={panel!}
   class="inspector"
   class:mobile
   aria-label="Torrent inspector"
@@ -141,21 +226,23 @@
   out:panelOut|global
 >
   <header class="inspector-header">
-    <span class="eyebrow">INSPECTOR</span>
+    {#if mobile}<button class="inspector-back" aria-label="Close inspector" onclick={close}
+        ><ChevronLeft size={22} />Transfers</button
+      >{:else}<span class="eyebrow">INSPECTOR</span>{/if}
     <div class="flex items-center gap-1">
       <button
         class="icon-button"
         aria-label={t.status === 0 ? 'Resume selected torrent' : 'Pause selected torrent'}
         onclick={() => client.safeAction(t.status === 0 ? 'torrent-start' : 'torrent-stop', [t.id])}
         >{#if t.status === 0}<Play size={15} />{:else}<Pause size={15} />{/if}</button
-      ><button class="icon-button" aria-label="Close inspector" onclick={close}
-        ><X size={17} /></button
-      >
+      >{#if !mobile}<button class="icon-button" aria-label="Close inspector" onclick={close}
+          ><X size={17} /></button
+        >{/if}
     </div>
   </header>
   <div class="inspector-title">
     <div class="file-tile"><File size={23} /></div>
-    <h2>{t.name}</h2>
+    <h2 tabindex="-1">{t.name}</h2>
     <span class="muted"
       >{t.metadataPercentComplete < 1
         ? 'File list not received yet'
@@ -165,14 +252,35 @@
   <div class="inspector-tabs" role="tablist" aria-label="Torrent details">
     {#each tabs as name}<button
         role="tab"
+        id={`${tabsId}-${name}`}
+        aria-controls={`${tabsId}-panel`}
+        tabindex={tab === name ? 0 : -1}
         aria-selected={tab === name}
         class:active={tab === name}
         onclick={() => (tab = name)}
+        onkeydown={(e) => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+          e.preventDefault();
+          const i = tabs.indexOf(name);
+          tab =
+            e.key === 'Home'
+              ? tabs[0]
+              : e.key === 'End'
+                ? tabs.at(-1)!
+                : tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+          panel.querySelector<HTMLElement>(`[id="${tabsId}-${tab}"]`)?.focus();
+        }}
         >{name}{#if name === 'Peers' && t.peersConnected > 0}<small>{t.peersConnected}</small
           >{/if}</button
       >{/each}
   </div>
-  <div class="inspector-scroll" role="tabpanel" aria-label={tab}>
+  <div
+    class="inspector-scroll"
+    bind:this={scrollPane!}
+    role="tabpanel"
+    id={`${tabsId}-panel`}
+    aria-labelledby={`${tabsId}-${tab}`}
+  >
     {#if tab === 'Overview'}
       <section
         class="torrent-stage"
@@ -200,10 +308,9 @@
             client.safeAction(t.status === 0 ? 'torrent-start' : 'torrent-stop', [t.id])}
           >{#if t.status === 0}<Play size={17} />Resume{:else}<Pause size={17} />Pause{/if}</button
         >
-        {#if client.fullSpeedAvailable}<button
+        {#if client.fullSpeedAvailable && t.percentDone < 1}<button
             class="button full-speed-button"
             class:enabled={client.isFullSpeed(t)}
-            disabled={t.percentDone === 1}
             aria-pressed={client.isFullSpeed(t)}
             onclick={() => client.fullSpeed(t)}
             ><Zap size={17} />{client.isFullSpeed(t)
@@ -213,12 +320,10 @@
               : 'Full speed'}</button
           >{/if}
       </div>
-      {#if client.fullSpeedAvailable}<p class="action-caption">
-          {t.percentDone === 1
-            ? 'Full speed is available while downloading.'
-            : client.isFullSpeed(t)
-              ? 'Automatic bandwidth control is bypassed. Turn off Full speed to restore it.'
-              : 'Full speed bypasses automatic bandwidth control for this download.'}
+      {#if client.fullSpeedAvailable && t.percentDone < 1}<p class="action-caption">
+          {client.isFullSpeed(t)
+            ? 'Automatic bandwidth control is bypassed. Turn off Full speed to restore it.'
+            : 'Full speed bypasses automatic bandwidth control for this download.'}
         </p>{/if}
       <section class="detail-section">
         <div class="section-heading">
@@ -324,23 +429,40 @@
             aria-label="Filter files"
             placeholder="Filter files…"
             bind:value={fileQuery}
-          /><button class="text-button" onclick={() => (collapsed = new Set())}>Expand</button
-          ><button
-            class="text-button"
-            onclick={() =>
-              (collapsed = new Set(
-                flatten(tree, new Set())
-                  .filter((n) => n.children.length)
-                  .map((n) => n.path),
-              ))}>Collapse</button
-          >
+          />{#if !fileQuery && tree.some((n) => n.children.length)}<button
+              class="text-button desktop-tree-action"
+              onclick={() => (collapsed = new Set())}>Expand</button
+            ><button
+              class="text-button desktop-tree-action"
+              onclick={() =>
+                (collapsed = new Set(
+                  flatten(tree, new Set())
+                    .filter((n) => n.children.length)
+                    .map((n) => n.path),
+                ))}>Collapse</button
+            >
+            <button
+              class="icon-button mobile-tree-action"
+              aria-label={collapsed.size ? 'Expand all folders' : 'Collapse all folders'}
+              onclick={() =>
+                (collapsed = collapsed.size
+                  ? new Set()
+                  : new Set(
+                      flatten(tree, new Set())
+                        .filter((n) => n.children.length)
+                        .map((n) => n.path),
+                    ))}
+              >{#if collapsed.size}<FolderOpen size={19} />{:else}<Folder size={19} />{/if}</button
+            >{/if}
         </div>
-        <p class="file-hint">Choose files to download.</p>
         <div class="file-tree" role="tree" aria-label="Torrent files">
           {#each nodes as n (n.path)}<div
               role="treeitem"
-              tabindex="0"
+              data-path={n.path}
+              tabindex={fileFocus === n.path ? 0 : -1}
+              onfocus={() => (fileFocus = n.path)}
               onkeydown={(e) => {
+                fileKeys(e, n);
                 if (e.key === 'F2' || e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
                   e.preventDefault();
                   e.stopPropagation();
@@ -357,18 +479,12 @@
               aria-expanded={n.children.length ? !collapsed.has(n.path) : undefined}
               aria-level={n.depth + 1}
               class="file-node"
-              style={`padding-left:${n.depth * 14 + 3}px;--depth:${n.depth}`}
+              style={`--depth:${fileQuery ? 0 : n.depth}`}
+              class:folder={n.children.length > 0}
             >
-              {#if n.children.length}<button
-                  class="tiny-button"
-                  aria-label={`Toggle ${n.name}`}
-                  onclick={() => toggleFolder(n.path)}
-                  >{#if collapsed.has(n.path)}<ChevronRight size={12} />{:else}<ChevronDown
-                      size={12}
-                    />{/if}</button
-                >{:else}<span class="tree-spacer"></span>{/if}
               <input
                 type="checkbox"
+                tabindex={fileFocus === n.path ? 0 : -1}
                 aria-label={`Download ${n.path}`}
                 checked={checked(n)}
                 indeterminate={mixed(n)}
@@ -380,68 +496,104 @@
               <div class="file-copy">
                 <button
                   class="file-name"
+                  tabindex={fileFocus === n.path ? 0 : -1}
                   title={n.path}
+                  aria-label={n.children.length ? `Toggle ${n.name}` : `File options for ${n.path}`}
                   onclick={() => {
                     if (n.children.length) toggleFolder(n.path);
-                    else {
-                      rename = n;
-                      renameValue = n.name;
-                    }
-                  }}>{n.name}</button
-                ><small class="file-meta"
-                  >{bytes(n.length)} · {percent(n.length ? n.completed / n.length : 1)}</small
+                    else fileOptions(n);
+                  }}
+                  >{#if n.children.length}{#if collapsed.has(n.path)}<ChevronRight
+                        size={13}
+                      />{:else}<ChevronDown size={13} />{/if}<Folder size={16} />{:else}<span
+                      class="file-leaf-indent"
+                      aria-hidden="true"
+                    ></span><File size={16} />{/if}<span>{n.name}</span></button
+                >{#if fileQuery && n.path.includes('/')}<small class="file-path"
+                    >{#each n.path
+                      .slice(0, n.path.lastIndexOf('/'))
+                      .split('/') as part, i}{#if i > 0}<span aria-hidden="true"> / </span><wbr
+                        />{/if}{part}{/each}</small
+                  >{/if}<small class="file-meta"
+                  >{bytes(n.length)} · {percent(
+                    n.length ? n.completed / n.length : 1,
+                  )}{#if priority(n) !== 0}<span class="mobile-file-priority">
+                      · {priority(n) === 1 ? 'High priority' : 'Low priority'}</span
+                    >{/if}</small
                 >
               </div>
               <select
                 class="file-priority"
+                tabindex={fileFocus === n.path ? 0 : -1}
                 aria-label={`Priority for ${n.path}`}
-                value={n.ids.every((i) => t.fileStats?.[i]?.priority === 1)
-                  ? 1
-                  : n.ids.every((i) => t.fileStats?.[i]?.priority === -1)
-                    ? -1
-                    : 0}
-                onchange={(e) =>
-                  client.safeAction('torrent-set', [t.id], {
-                    [Number(e.currentTarget.value) === 1
-                      ? 'priority-high'
-                      : Number(e.currentTarget.value) === -1
-                        ? 'priority-low'
-                        : 'priority-normal']: n.ids,
-                  })}
+                value={priority(n)}
+                onchange={(e) => setPriority(n, Number(e.currentTarget.value))}
                 ><option value={-1}>Low</option><option value={0}>Normal</option><option value={1}
                   >High</option
                 ></select
               >
+              <button
+                class="icon-button file-actions"
+                tabindex={fileFocus === n.path ? 0 : -1}
+                aria-label={`Actions for ${n.path}`}
+                onclick={() => fileOptions(n)}><MoreHorizontal size={17} /></button
+              >
             </div>{/each}
+          {#if !nodes.length}<div class="panel-empty">
+              <File size={24} /><b>No matching files</b><button
+                class="button secondary"
+                onclick={() => (fileQuery = '')}>Clear filter</button
+              >
+            </div>{/if}
         </div>{/if}
     {:else if tab === 'Peers'}
-      <PeerGraph peers={t.peers || []} />
-      <div class="section-heading">
-        <h3>{t.peersConnected} connected peers</h3>
-        <span class="muted">{t.peersSendingToUs} sending data</span>
-      </div>
-      <div class="table-scroll">
-        <table class="peer-table">
-          <thead
-            ><tr><th>Peer / Client</th><th>Progress</th><th>Download</th><th>Upload</th></tr></thead
-          ><tbody
-            >{#each t.peers || [] as p (p.address + ':' + p.port)}<tr
-                ><td
-                  ><div class="peer-address">
+      {#if mobile}<div class="peer-view-control" role="group" aria-label="Peer view">
+          <button aria-pressed={peerView === 'list'} onclick={() => (peerView = 'list')}
+            ><List size={17} />List</button
+          ><button aria-pressed={peerView === 'diagram'} onclick={() => (peerView = 'diagram')}
+            ><Network size={17} />Diagram</button
+          >
+        </div>{/if}
+      {#if !mobile || peerView === 'diagram'}<PeerGraph
+          peers={t.peers || []}
+          compact={mobile}
+          bind:chosen={chosenPeer}
+        />{/if}
+      {#if !mobile || peerView === 'list'}
+        <div class="section-heading">
+          <h3>{t.peersConnected} connected peers</h3>
+          <span class="muted">{t.peersSendingToUs} sending data</span>
+        </div>
+        <div class="table-scroll">
+          <div class="peer-list">
+            <div class="peer-columns" aria-hidden="true">
+              <span>Peer / Client</span><span>Progress</span><span>Download</span><span>Upload</span
+              >
+            </div>
+            {#each t.peers || [] as p (p.address + ':' + p.port)}<button
+                class="peer-row"
+                class:selected={chosenPeer === `${p.address}:${p.port}`}
+                aria-label={`Select peer ${p.address} port ${p.port}`}
+                aria-pressed={chosenPeer === `${p.address}:${p.port}`}
+                onclick={() =>
+                  (chosenPeer =
+                    chosenPeer === `${p.address}:${p.port}` ? null : `${p.address}:${p.port}`)}
+                ><span
+                  ><span class="peer-address">
                     {p.address}{#if p.isEncrypted}<ShieldCheck size={11} />{/if}
-                  </div>
+                  </span>
                   <small
-                    >{p.clientName || 'Unknown'} · {p.isUTP ? 'µTP' : 'TCP'}{p.isIncoming
+                    >{p.clientName || 'Unknown'} · {p.port} · {p.isUTP ? 'µTP' : 'TCP'}{p.isIncoming
                       ? ' · Incoming'
                       : ''}</small
-                  ></td
-                ><td>{percent(p.progress)}</td><td class="download">{speed(p.rateToClient)}</td><td
-                  class="upload">{speed(p.rateToPeer)}</td
-                ></tr
-              >{:else}<tr><td colspan="4" class="empty-cell">{s.detail}</td></tr>{/each}</tbody
-          >
-        </table>
-      </div>
+                  ></span
+                ><span>{percent(p.progress)}</span><span class="download"
+                  >{speed(p.rateToClient)}</span
+                ><span class="upload">{speed(p.rateToPeer)}</span></button
+              >{:else}<p class="hint">{s.detail}</p>{/each}
+          </div>
+        </div>
+      {/if}
     {:else if tab === 'Trackers'}
       <div class="section-heading">
         <h3>Peer discovery</h3>
@@ -494,7 +646,8 @@
                     : `${tracker.seederCount >= 0 ? `${tracker.seederCount} seeds` : 'Seeds unknown'} · ${tracker.lastAnnouncePeerCount || 0} peers`}</span
             >
             {#if tracker.nextAnnounceTime > 0}<span class="next-announce"
-                >{duration(tracker.nextAnnounceTime - Date.now() / 1000)}</span
+                >{failed ? 'Retry in' : 'Next in'}
+                {duration(tracker.nextAnnounceTime - Date.now() / 1000)}</span
               >{/if}
           </div>
           {#if expanded}<div class="tracker-extra">
@@ -609,16 +762,19 @@
               >{/if}
           </div>
         </section>
-        <details class="detail-disclosure">
-          <summary>Advanced <ChevronRight size={16} /></summary><label class="setting-row"
-            ><span>Peer limit</span><input
-              type="number"
-              min="1"
-              aria-label="Peer limit"
-              bind:value={options['peer-limit']}
-            /></label
-          >
-        </details>
+        <section class="settings-group">
+          <h3>Connections</h3>
+          <div class="settings-card">
+            <label class="setting-row"
+              ><span>Peer limit</span><input
+                type="number"
+                min="1"
+                aria-label="Peer limit"
+                bind:value={options['peer-limit']}
+              /></label
+            >
+          </div>
+        </section>
       </form>
     {/if}
   </div>
@@ -631,7 +787,9 @@
       >
     </footer>{/if}
 </aside>
-{#if rename}<Modal title="Rename file" close={() => (rename = null)}
+{#if rename}<Modal
+    title={rename.children.length ? 'Folder options' : 'File options'}
+    close={() => (rename = null)}
     ><form
       class="modal-form"
       onsubmit={async (e) => {
@@ -644,8 +802,20 @@
         rename = null;
       }}
     >
-      <label>File name<input class="input" required bind:value={renameValue} /></label><button
-        class="button primary">Rename</button
+      <p class="file-option-path">{rename.path}</p>
+      <label
+        >Download priority<select
+          aria-label="Download priority"
+          value={priority(rename)}
+          onchange={(e) => setPriority(rename!, Number(e.currentTarget.value))}
+          ><option value={-1}>Low</option><option value={0}>Normal</option><option value={1}
+            >High</option
+          ></select
+        ></label
+      >
+      <label>Name<input class="input" required bind:value={renameValue} /></label><button
+        class="button primary"
+        disabled={renameValue === rename.name}>Rename</button
       >
     </form></Modal
   >{/if}

@@ -1,10 +1,26 @@
 import { expect, type Page, test } from '@playwright/test';
 import { fixtures } from '../fixtures';
 
+async function settingsSection(page: Page, section: string) {
+  const back = page.getByRole('button', { name: 'Back to settings', exact: true });
+  if (await back.isVisible()) await back.click();
+  const label =
+    ({ Limits: 'Bandwidth', Transfers: 'Downloads' } as Record<string, string>)[section] || section;
+  await page
+    .getByRole('navigation', { name: 'Settings sections', exact: true })
+    .getByRole('button', { name: label, exact: true })
+    .click();
+}
+
 async function server(
   page: Page,
   features: boolean | 'stale' = true,
-  options: { startupFailures?: number; waitForReady?: boolean } = {},
+  options: {
+    startupFailures?: number;
+    waitForReady?: boolean;
+    portDelay?: number;
+    portOpen?: boolean;
+  } = {},
 ) {
   let failures = options.startupFailures || 0;
   const torrents = fixtures();
@@ -67,6 +83,10 @@ async function server(
           encryption: 'preferred',
         };
         break;
+      case 'port-test':
+        await new Promise((resolve) => setTimeout(resolve, options.portDelay ?? 500));
+        result = { 'port-is-open': options.portOpen ?? true };
+        break;
       case 'torrent-set':
         for (const t of targets) Object.assign(t, args);
         break;
@@ -121,8 +141,10 @@ test('file tree checkboxes send the complete folder selection; peers include a r
     )
     .toBeTruthy();
   await page.getByRole('tab', { name: /^Peers/ }).click();
-  await expect(page.getByRole('img', { name: /8 connected peers/ })).toBeVisible();
-  await page.getByRole('button', { name: 'Inspect peer 192.0.2.1', exact: true }).click();
+  await expect(page.getByRole('group', { name: /8 connected peers/ })).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Inspect peer 192.0.2.1 port 51413', exact: true })
+    .click();
   await expect(page.locator('.peer-card')).toContainText('192.0.2.1');
   await page.screenshot({ path: 'test-results/drift-peers.png', fullPage: true });
 });
@@ -343,11 +365,12 @@ test('mobile navigation is thumb reachable and every visible control has a 44px 
   await nav.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
   expect(await smallTargets(page)).toEqual([]);
-  await page.getByRole('combobox', { name: 'Settings section' }).selectOption('Limits');
+  await settingsSection(page, 'Limits');
   await page.getByRole('switch', { name: 'Download limit', exact: true }).check();
   await page.getByRole('spinbutton', { name: 'Maximum download', exact: true }).fill('123');
   await nav.getByRole('button', { name: 'Activity', exact: true }).click();
   await nav.getByRole('button', { name: 'Settings', exact: true }).click();
+  await settingsSection(page, 'Limits');
   await expect(page.getByRole('spinbutton', { name: 'Maximum download', exact: true })).toHaveValue(
     '123',
   );
@@ -508,7 +531,7 @@ test('small phones keep file, tracker, options, and settings controls at 44px wi
     .getByRole('button', { name: 'Settings', exact: true })
     .click();
   for (const name of ['Connection', 'Appearance', 'Limits', 'Transfers', 'Network']) {
-    await page.getByRole('combobox', { name: 'Settings section' }).selectOption(name);
+    await settingsSection(page, name);
     await audit();
     await page.locator('.mobile-page-scroll').evaluate((el) => {
       el.scrollTop = el.scrollHeight;
@@ -550,7 +573,7 @@ test('missing newer APIs and blocked storage keep the client usable', async ({ p
     .getByRole('navigation', { name: 'Main navigation' })
     .getByRole('button', { name: 'Settings', exact: true })
     .click();
-  await page.getByRole('combobox', { name: 'Settings section' }).selectOption('Appearance');
+  await settingsSection(page, 'Appearance');
   await page.getByRole('combobox', { name: 'Color theme' }).selectOption('dark');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
@@ -611,13 +634,16 @@ test('layout, details, peer card, and settings follow the reviewed composition',
   await expect(row.locator('.row-speeds')).toHaveText(/KB\/s/);
   await page.screenshot({ path: 'test-results/review-desktop-wide.png', fullPage: true });
   await row.click();
-  await expect(page.getByRole('button', { name: 'Full speed', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Full speed', exact: true })).toHaveCount(0);
+  await expect(page.locator('.action-caption')).toHaveCount(0);
   await expect(page.locator('.inspector')).not.toContainText('No labels');
   await page.screenshot({ path: 'test-results/review-completed-details.png', fullPage: true });
   await page.getByRole('button', { name: 'Close inspector' }).click();
   await page.getByTestId('torrent-row').first().click();
   await page.getByRole('tab', { name: /^Peers/ }).click();
-  await page.getByRole('button', { name: 'Inspect peer 192.0.2.1', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Inspect peer 192.0.2.1 port 51413', exact: true })
+    .click();
   const graph = await page.locator('.peer-map>svg').boundingBox(),
     card = await page.locator('.peer-card').boundingBox();
   expect(card!.y).toBeGreaterThanOrEqual(graph!.y + graph!.height);
@@ -636,7 +662,7 @@ test('layout, details, peer card, and settings follow the reviewed composition',
     .getByRole('navigation', { name: 'Main navigation' })
     .getByRole('button', { name: 'Settings', exact: true })
     .click();
-  await page.getByRole('combobox', { name: 'Settings section' }).selectOption('Network');
+  await settingsSection(page, 'Network');
   await page.waitForTimeout(220);
   await page.screenshot({ path: 'test-results/review-settings-phone.png', fullPage: true });
   expect(await smallTargets(page)).toEqual([]);
@@ -676,7 +702,7 @@ test('mobile settings keep the commit action reachable and submit the associated
     .getByRole('navigation', { name: 'Main navigation' })
     .getByRole('button', { name: 'Settings', exact: true })
     .click();
-  await page.getByRole('combobox', { name: 'Settings section' }).selectOption('Network');
+  await settingsSection(page, 'Network');
   await page.getByRole('spinbutton', { name: 'Incoming port', exact: true }).fill('54321');
   const save = page.getByRole('button', { name: 'Save changes', exact: true }),
     box = await save.boundingBox();
@@ -719,4 +745,208 @@ test('single-file priorities fit and labels filter the library', async ({ page }
   await expect(page.getByTestId('torrent-row')).toHaveCount(1);
   await page.getByRole('button', { name: 'Clear label filter' }).click();
   await expect(page.getByTestId('torrent-row')).toHaveCount(6);
+});
+
+test('wide sidebars stay anchored and details overlay without moving transfer content', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 2560, height: 1200 });
+  await server(page);
+  expect((await page.locator('.sidebar').boundingBox())!.x).toBe(0);
+  const row = page.getByTestId('torrent-row').first();
+  const before = await row.boundingBox();
+  const heading = await page.locator('.topbar').boundingBox();
+  await row.click();
+  await page.waitForTimeout(220);
+  expect(await row.boundingBox()).toEqual(before);
+  expect(await page.locator('.topbar').boundingBox()).toEqual(heading);
+  expect((await page.locator('.inspector').boundingBox())!.width).toBe(560);
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await expect(page.locator('.inspector')).toHaveCount(0);
+  expect(await row.boundingBox()).toEqual(before);
+  await page
+    .getByTestId('torrent-row')
+    .nth(2)
+    .click({ modifiers: ['Shift'] });
+  expect(await page.evaluate(() => getSelection()?.toString())).toBe('');
+  await expect(page.getByTestId('torrent-row').nth(2)).toContainText('63% verified');
+});
+
+test('peer rows and diagram share selection including peers at the same address', async ({
+  page,
+}) => {
+  const { torrents } = await server(page);
+  torrents[0].peers!.push({
+    ...torrents[0].peers![0],
+    port: 50001,
+    clientName: 'A second connection',
+  });
+  await page.getByTestId('torrent-row').first().click();
+  await page.getByRole('tab', { name: /^Peers/ }).click();
+  const connection = page.getByRole('button', {
+    name: 'Select peer 192.0.2.1 port 50001',
+    exact: true,
+  });
+  await connection.click();
+  await expect(connection).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.peer-card')).toContainText('192.0.2.1:50001');
+  await expect(page.locator('.peer-card')).toContainText('A second connection');
+  await expect(
+    page.getByRole('button', { name: 'Inspect peer 192.0.2.1 port 50001', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await page
+    .getByRole('button', { name: 'Inspect peer 192.0.2.1 port 51413', exact: true })
+    .click();
+  await expect(page.locator('.peer-card')).toContainText('192.0.2.1:51413');
+  await expect(connection).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('deep phone file trees preserve ancestry and send the exact folder file indices', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  const { torrents, calls } = await server(page);
+  const names = [
+    'Project/Docs/README.md',
+    'Project/Source/packages/client/src/lib/components/tree/README.md',
+    'Project/Source/packages/client/src/lib/components/tree/Tree.svelte',
+    'Project/Source/packages/server/README.md',
+    'Media/Season 1/Episode 1.mkv',
+    'Media/Season 2/Episode 1.mkv',
+    'LICENSE',
+  ];
+  torrents[0].files = names.map((name) => ({ name, length: 1048576, bytesCompleted: 524288 }));
+  torrents[0].fileStats = names.map(() => ({ wanted: true, priority: 0, bytesCompleted: 524288 }));
+  await page.getByTestId('torrent-row').first().click();
+  await expect(page.locator('.main-pane')).toHaveAttribute('inert', '');
+  await expect(page.locator('.inspector-title h2')).toBeFocused();
+  await page.getByRole('tab', { name: 'Files', exact: true }).click();
+  const deep = page.getByRole('treeitem').filter({
+    has: page.getByRole('checkbox', {
+      name: 'Download Project/Source/packages/client/src/lib/components/tree/README.md',
+      exact: true,
+    }),
+  });
+  expect(parseFloat(await deep.evaluate((el) => getComputedStyle(el).paddingLeft))).toBeGreaterThan(
+    80,
+  );
+  await page.getByRole('checkbox', { name: 'Download Project/Source', exact: true }).uncheck();
+  await expect
+    .poll(
+      () =>
+        calls.find((c) => c.method === 'torrent-set' && c.arguments['files-unwanted'])?.arguments[
+          'files-unwanted'
+        ],
+    )
+    .toEqual([1, 2, 3]);
+  await page.getByRole('textbox', { name: 'Filter files', exact: true }).fill('README');
+  await expect(page.locator('.file-path')).toHaveCount(3);
+  await expect(
+    page
+      .locator('.file-path')
+      .filter({ hasText: /Project.*Source.*packages.*client.*src.*lib.*components.*tree/ }),
+  ).toBeVisible();
+  await page.getByRole('textbox', { name: 'Filter files', exact: true }).fill('no-such-file');
+  await expect(page.getByText('No matching files', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Clear filter', exact: true }).click();
+  await page.getByRole('button', { name: 'Collapse all folders' }).click();
+  await expect(page.getByRole('treeitem')).toHaveCount(3);
+  await page.getByRole('button', { name: 'Actions for Project', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Folder options' })).toBeVisible();
+  await page.getByRole('combobox', { name: 'Download priority', exact: true }).selectOption('1');
+  await expect
+    .poll(
+      () =>
+        calls.find((c) => c.method === 'torrent-set' && c.arguments['priority-high'])?.arguments[
+          'priority-high'
+        ],
+    )
+    .toEqual([0, 1, 2, 3]);
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await expect(page.locator('.inspector')).toHaveCount(0);
+  await expect(page.getByTestId('torrent-row').first()).toBeFocused();
+  await expect(page.locator('.main-pane')).not.toHaveAttribute('inert', '');
+});
+
+test('settings navigation is distinct from values and port tests show inline progress and result', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  const options = { portDelay: 1200, portOpen: false };
+  const { calls } = await server(page, true, options);
+  await page
+    .getByRole('navigation', { name: 'Main navigation' })
+    .getByRole('button', { name: 'Settings', exact: true })
+    .click();
+  await expect(page.getByRole('combobox', { name: 'Settings section' })).toHaveCount(0);
+  await expect(
+    page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button'),
+  ).toHaveCount(5);
+  await settingsSection(page, 'Network');
+  await page.getByRole('button', { name: 'Test port', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Testing…', exact: true })).toBeDisabled();
+  await expect(page.locator('.inline-result')).toContainText('Checking port 51413');
+  await expect(page.locator('.inline-result')).toContainText('Port 51413 is closed');
+  await expect(page.locator('.toast')).toHaveCount(0);
+  options.portOpen = true;
+  await page.getByRole('button', { name: 'Test again', exact: true }).click();
+  await expect(page.locator('.inline-result')).toContainText('Port 51413 is reachable');
+  expect(calls.filter((c) => c.method === 'port-test')).toHaveLength(2);
+});
+
+test('inspector arrow keys stay inside details and tabs and files follow keyboard conventions', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await server(page);
+  await page.getByTestId('torrent-row').first().click();
+  const overview = page.getByRole('tab', { name: 'Overview', exact: true });
+  await overview.focus();
+  await overview.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Files', exact: true })).toBeFocused();
+  const root = page.getByRole('treeitem').first();
+  await root.focus();
+  await root.press('ArrowRight');
+  await expect(page.getByRole('treeitem').nth(1)).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByRole('treeitem').nth(1)).toHaveAttribute('aria-expanded', 'false');
+  await page.keyboard.press('ArrowLeft');
+  await expect(root).toBeFocused();
+  await page.getByRole('tab', { name: /^Peers/ }).click();
+  await expect(
+    page.locator('.peer-view-control button').filter({ hasText: 'List' }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  const peer = page.locator('.peer-row').first();
+  await peer.focus();
+  await peer.press('ArrowDown');
+  await peer.press('ArrowUp');
+  await expect(page.locator('.inspector-title h2')).toHaveText('Ubuntu 24.04.4 Desktop.iso');
+  await peer.click();
+  await page.getByRole('button', { name: 'Diagram', exact: true }).click();
+  await expect(page.locator('.peer-card')).toContainText('192.0.2.1:51413');
+  await page.getByRole('button', { name: 'List', exact: true }).click();
+  await expect(peer).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await expect(page.locator('.inspector')).toHaveCount(0);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.getByTestId('torrent-row').first().focus();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByTestId('torrent-row').nth(1)).toBeFocused();
+  await expect(page.locator('.inspector-title h2')).toHaveText('Debian 13.1 · netinst');
+});
+
+test('completed and unavailable Full speed states do not leave row badges behind', async ({
+  page,
+}) => {
+  const { torrents } = await server(page, 'stale');
+  torrents[0].labels = ['router:full-speed'];
+  torrents[5].labels = ['router:full-speed'];
+  await page.waitForTimeout(2300);
+  await expect(page.locator('.full-indicator')).toHaveCount(0);
+  await page.getByTestId('torrent-row').last().click();
+  await expect(page.locator('.full-speed-button')).toHaveCount(0);
+  await expect(page.locator('.action-caption')).toHaveCount(0);
 });

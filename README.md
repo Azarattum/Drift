@@ -8,8 +8,8 @@ A quiet, compact web client for Transmission. Built for desktop, comfortable on 
 - Explicit stages: peer discovery, metadata retrieval, verification, queueing, missing pieces, downloading, and seeding. Unknown metadata is never shown as a zero-byte download.
 - Download/upload history built with [LayerChart](https://layerchart.com), using measured samples, time axes, adaptive speed units, and interactive tooltips. Loads available server history or cached browser observations; background tabs poll less frequently.
 - Mobile bottom navigation for Transfers, Activity, and Settings, with a separate reachable Add button, safe-area spacing, and touch targets of at least 44 × 44 CSS pixels.
-- Inspector with a selectable file tree, folder-wide download selection, file priority and renaming, tracker editing, peer graph and table, statistics, labels, and transfer options.
-- Grouped settings with a desktop navigation column, a mobile section picker, custom switches and checkboxes, and persistent commit actions.
+- Overlay inspector that leaves the desktop layout stationary, with a selectable file tree, folder-wide download selection, file priority and renaming, tracker editing, linked peer graph/list selection, statistics, labels, and transfer options. File search preserves ancestor paths and the tree supports arrow-key navigation.
+- Grouped settings with a desktop navigation column, an iOS-style section list and back navigation on phones, custom switches and checkboxes, persistent commit actions, and inline progress/results for network checks.
 - Magnets, torrent URLs, multi-file upload, drag and drop, file relocation, verification, reannouncing, queue ordering, and magnet/hash copying. Copying works on HTTP LAN pages; browsers that block it offer selectable text.
 - Server bandwidth, slow mode, directories, queue, seeding, encryption, discovery, peer, port-mapping, and blocklist settings.
 - Optional **Full speed** extension, detected at runtime. Unsupported controls stay hidden on standard daemons.
@@ -124,7 +124,7 @@ The helper derives the bind address from UCI; DRIFT_RPC_URL can override the end
 
 ## Design and license
 
-Flat surfaces, a restrained hierarchy, contextual controls, and explicit state. Readable typography with a 12px minimum for annotations, keyed FLIP movement, stable inspector exits, short overlay motion, and functional scroll fades. No decorative gradients or private design-library dependencies.
+Flat surfaces, a restrained hierarchy, contextual controls, and explicit state. Readable typography with a 12px minimum for annotations, keyed FLIP movement, stable inspector exits, and short overlay motion. No decorative gradients or private design-library dependencies.
 
 MIT. Inter: SIL Open Font License. Lucide and D3: ISC. LayerChart: MIT. The inert polyfill: W3C Software License. Third-party notices are included in public/licenses and the compiled bundle.
 

@@ -34,7 +34,6 @@
 <div
   class="torrent-row"
   class:selected
-  class:boosted={full}
   data-testid="torrent-row"
   role="option"
   aria-selected={selected}
@@ -82,10 +81,12 @@
       ><span class="size muted"
         >{t.errorString || s.tone === 'amber' || s.tone === 'red'
           ? t.errorString || s.detail
-          : t.metadataPercentComplete < 1
-            ? 'Retrieving file list'
-            : `${bytes(t.sizeWhenDone)}${t.percentDone < 1 ? ` · ${percent(t.percentDone)}` : ''}`}</span
-      >{#if full}<span
+          : t.status === 2
+            ? s.detail
+            : t.metadataPercentComplete < 1
+              ? 'Retrieving file list'
+              : `${bytes(t.sizeWhenDone)}${t.percentDone < 1 ? ` · ${percent(t.percentDone)}` : ''}`}</span
+      >{#if full && client.fullSpeedAvailable && t.percentDone < 1}<span
           class="full-indicator"
           title={!client.fullSpeedAvailable
             ? 'Full speed controller is unavailable'

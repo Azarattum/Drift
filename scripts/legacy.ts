@@ -168,7 +168,8 @@ try {
   assert(dockReachable, 'Bottom navigation remains reachable over the inspector');
   await page.screenshot({ path: 'test-results/ios15.4-files.png' });
   await page.locator('[role="tab"]').nth(2).click();
-  await page.locator('[aria-label="Inspect peer 192.0.2.1"]').click();
+  await page.locator('.peer-view-control button', { hasText: 'Diagram' }).click();
+  await page.locator('[aria-label="Inspect peer 192.0.2.1 port 51413"]').click();
   assert((await page.locator('.peer-card').textContent())?.includes('192.0.2.1'));
   await audit();
   await page.locator('[aria-label="Close inspector"]').click();
@@ -208,7 +209,7 @@ try {
   assert((await page.locator('.chart-legend').textContent())?.includes('MB/s'));
   await page.screenshot({ path: 'test-results/ios15.4-activity.png' });
   await page.locator('.mobile-tabbar button').nth(2).click();
-  await page.locator('select[aria-label="Settings section"]').selectOption('Appearance');
+  await page.locator('.settings-index button', { hasText: 'Appearance' }).click();
   await page.locator('select[aria-label="Color theme"]').selectOption('dark');
   assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
   await audit();

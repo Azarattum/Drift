@@ -2,17 +2,27 @@
   import { ArrowDown, ArrowUp, ShieldCheck, X, Network } from '@lucide/svelte';
   import type { Peer } from '../lib/types';
   import { percent, speed } from '../lib/format';
-  let { peers }: { peers: Peer[] } = $props();
-  let chosen = $state<string | null>(null);
-  let visible = $derived(peers.slice(0, 48));
-  let selected = $derived(peers.find((p) => p.address === chosen));
+  let {
+    peers,
+    chosen = $bindable<string | null>(null),
+    compact = false,
+  }: { peers: Peer[]; chosen?: string | null; compact?: boolean } = $props();
+  const key = (p: Peer) => `${p.address}:${p.port}`;
+  let visible = $derived.by(() => {
+    const list = peers.slice(0, compact ? 8 : 48);
+    const chosenPeer = peers.find((p) => key(p) === chosen);
+    if (chosenPeer && !list.includes(chosenPeer)) list[list.length - 1] = chosenPeer;
+    return list;
+  });
+  const center = $derived(compact ? 96 : 132);
+  let selected = $derived(peers.find((p) => key(p) === chosen));
   $effect(() => {
-    if (chosen && !peers.some((p) => p.address === chosen)) chosen = null;
+    if (chosen && !peers.some((p) => key(p) === chosen)) chosen = null;
   });
   function point(i: number) {
     const angle = (i / Math.max(1, visible.length)) * Math.PI * 2 - Math.PI / 2;
-    const r = i % 2 === 0 ? 105 : 85;
-    return { x: 160 + Math.cos(angle) * r, y: 132 + Math.sin(angle) * r };
+    const r = compact ? (i % 2 === 0 ? 70 : 50) : i % 2 === 0 ? 105 : 85;
+    return { x: 160 + Math.cos(angle) * r, y: center + Math.sin(angle) * r };
   }
 </script>
 
@@ -22,26 +32,26 @@
         >Connections appear here as peers join.</span
       >
     </div>{:else}<svg
-      viewBox="0 0 320 264"
-      role="img"
+      viewBox={`0 0 320 ${compact ? 192 : 264}`}
+      role="group"
       aria-label={`${peers.length} connected peers. Blue connections are downloading, teal are uploading.`}
     >
-      <circle cx="160" cy="132" r="105" class="orbit" /><circle
+      <circle cx="160" cy={center} r={compact ? 70 : 105} class="orbit" /><circle
         cx="160"
-        cy="132"
-        r="63"
+        cy={center}
+        r={compact ? 40 : 63}
         class="orbit"
       />
       {#each visible as p, i (p.address + ':' + p.port)}
         {@const pos = point(i)}
         <line
           x1="160"
-          y1="132"
+          y1={center}
           x2={pos.x}
           y2={pos.y}
           stroke={p.rateToClient ? 'var(--blue)' : p.rateToPeer ? 'var(--teal)' : 'var(--border)'}
           stroke-width={p.rateToClient || p.rateToPeer ? 1.3 : 0.6}
-          opacity={chosen && chosen !== p.address?.toString()?.trim() ? 0.2 : 0.7}
+          opacity={chosen && chosen !== key(p) ? 0.2 : 0.7}
         />
         {#if p.rateToClient || p.rateToPeer}<circle
             r="2"
@@ -50,25 +60,24 @@
             ><animateMotion
               dur={`${Math.max(1, 4 - (p.rateToClient + p.rateToPeer) / 500000)}s`}
               repeatCount="indefinite"
-              path={`M ${p.rateToClient ? pos.x : 160} ${p.rateToClient ? pos.y : 132} L ${p.rateToClient ? 160 : pos.x} ${p.rateToClient ? 132 : pos.y}`}
+              path={`M ${p.rateToClient ? pos.x : 160} ${p.rateToClient ? pos.y : center} L ${p.rateToClient ? 160 : pos.x} ${p.rateToClient ? center : pos.y}`}
             /></circle
           >{/if}
         <g
           role="button"
           tabindex="0"
-          aria-label={`Inspect peer ${p.address}`}
-          aria-pressed={chosen === p.address}
+          aria-label={`Inspect peer ${p.address} port ${p.port}`}
+          aria-pressed={chosen === key(p)}
           onkeydown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') e.preventDefault();
-            if (e.key === 'Enter' || e.key === ' ')
-              chosen = chosen === p.address ? null : p.address;
+            if (e.key === 'Enter' || e.key === ' ') chosen = chosen === key(p) ? null : key(p);
             if (e.key === 'Escape') {
               e.preventDefault();
               e.stopPropagation();
               chosen = null;
             }
           }}
-          onclick={() => (chosen = chosen === p.address ? null : p.address)}
+          onclick={() => (chosen = chosen === key(p) ? null : key(p))}
         >
           <title>{p.address} · {p.clientName} · {percent(p.progress)}</title><circle
             class="peer-target"
@@ -79,14 +88,15 @@
           /><circle
             cx={pos.x}
             cy={pos.y}
-            r={p.address === chosen ? 6 : 4}
+            r={key(p) === chosen ? 6 : 4}
             fill={p.rateToClient ? 'var(--blue)' : p.rateToPeer ? 'var(--teal)' : 'var(--muted)'}
             stroke="var(--surface)"
             stroke-width="2"
           />
         </g>
       {/each}
-      <circle cx="160" cy="132" r="22" fill="var(--surface)" stroke="var(--border)" /><path
+      <circle cx="160" cy={center} r="22" fill="var(--surface)" stroke="var(--border)" /><path
+        transform={`translate(0 ${center - 132})`}
         d="M154 130v-5h12v5m-12 5v4h12v-4m-6-9v9m-3-3 3 3 3-3"
         stroke="var(--text)"
         fill="none"
@@ -94,6 +104,14 @@
         stroke-linejoin="round"
       />
     </svg>{/if}
+  {#if peers.length}<div class="peer-legend">
+      <span class="download"><ArrowDown size={13} />Download</span><span class="upload"
+        ><ArrowUp size={13} />Upload</span
+      ><span><i class="status-dot"></i>Idle</span>
+    </div>{/if}
+  {#if visible.length < peers.length}<p class="peer-map-count">
+      {visible.length} of {peers.length} shown · all peers below
+    </p>{/if}
   {#if selected}<div class="peer-card">
       <button
         class="icon-button peer-card-close"
@@ -106,8 +124,11 @@
           }
         }}
         onclick={() => (chosen = null)}><X size={16} /></button
-      ><b>{selected.address}</b><span
-        >{selected.clientName || 'Unknown client'} · {percent(selected.progress)} complete</span
+      ><b
+        >{selected.address.includes(':')
+          ? `[${selected.address}]:${selected.port}`
+          : `${selected.address}:${selected.port}`}</b
+      ><span>{selected.clientName || 'Unknown client'} · {percent(selected.progress)} complete</span
       >
       <div>
         <span class="download"><ArrowDown size={12} />{speed(selected.rateToClient)}</span><span

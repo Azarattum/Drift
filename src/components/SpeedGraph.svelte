@@ -10,11 +10,13 @@
     samples,
     expanded = false,
     serverHistory = false,
+    online = true,
   }: {
     samples: Sample[];
     compact?: boolean;
     expanded?: boolean;
     serverHistory?: boolean;
+    online?: boolean;
   } = $props();
   let windowMinutes = $state(2);
   let width = $state(700);
@@ -148,7 +150,11 @@
     </div>{/if}
   <div class="history-status">
     <Clock3 size={13} /><span
-      >{serverHistory ? 'Recording on the server' : 'History from this browser'}</span
+      >{!online
+        ? `Offline · last update ${last ? time(last.at) : 'unavailable'}`
+        : serverHistory
+          ? 'Recording on the server'
+          : 'History from this browser'}</span
     >
   </div>
 </section>

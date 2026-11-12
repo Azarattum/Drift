@@ -16,6 +16,7 @@
     CheckCheck,
     ChevronDown,
     ChevronRight,
+    ChevronLeft,
     CircleAlert,
     Clipboard,
     Copy,
@@ -29,6 +30,7 @@
     Link,
     ListFilter,
     Moon,
+    Monitor,
     MoreHorizontal,
     Pause,
     Play,
@@ -56,6 +58,7 @@
   let mobile = $state(matchMedia('(max-width: 900px)').matches);
   let mobileSection = $state<'transfers' | 'activity' | 'settings'>('transfers');
   let mobileSettingsInitialized = false;
+  let mobileSettingsDetail = $state(false);
   let filterSheet = $state(false);
   let queryInput = $state<HTMLInputElement>();
   let context = $state<{ x: number; y: number; t: Torrent } | null>(null);
@@ -101,6 +104,7 @@
         modal = mobile ? null : 'settings';
         mobileSection = mobile ? 'settings' : 'transfers';
         mobileSettingsInitialized = true;
+        mobileSettingsDetail = true;
       } else if (!mobile) mobileSection = 'transfers';
     };
     mobileMedia.addEventListener('change', viewportChanged);
@@ -130,6 +134,7 @@
     };
   });
   function openSettings(tab?: string) {
+    const returningToSettings = mobileSection !== 'settings' && mobileSettingsInitialized;
     if (!mobile || !mobileSettingsInitialized) {
       sessionDraft = { ...client.session };
       endpoint = client.rpc.endpoint;
@@ -137,6 +142,7 @@
     } else if (tab) settingsTab = tab;
     context = null;
     if (mobile) {
+      if (tab || !returningToSettings) mobileSettingsDetail = !!tab;
       mobileSettingsInitialized = true;
       mobileSection = 'settings';
       client.selected = [];
@@ -305,6 +311,10 @@
     }
   }
   function keyboard(e: KeyboardEvent) {
+    const target = e.target as HTMLElement;
+    const inLibrary =
+      !!target?.closest('.torrent-list') ||
+      (target === document.body && !client.focused && (!mobile || mobileSection === 'transfers'));
     const editable = (e.target as HTMLElement)?.closest('input,textarea,select,[contenteditable]');
     if (e.key === 'Escape') {
       if (context) {
@@ -330,7 +340,7 @@
       e.preventDefault();
       queryInput?.focus();
     }
-    if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'a' && inLibrary) {
       e.preventDefault();
       client.selected = client.visible.map((t) => t.id);
     }
@@ -338,12 +348,12 @@
       e.preventDefault();
       openAdd();
     }
-    if (['Delete', 'Backspace'].includes(e.key) && client.selected.length) {
+    if (['Delete', 'Backspace'].includes(e.key) && client.selected.length && inLibrary) {
       e.preventDefault();
       requestRemove();
     }
 
-    if (['ArrowDown', 'ArrowUp'].includes(e.key) && !context) {
+    if (['ArrowDown', 'ArrowUp'].includes(e.key) && !context && inLibrary) {
       e.preventDefault();
       const at = client.visible.findIndex((t) => t.id === client.selected.at(-1));
       const t =
@@ -352,9 +362,13 @@
         ];
       if (t) {
         client.select(t);
-        void tick().then(() =>
-          document.querySelector(`[data-row="${t.id}"]`)?.scrollIntoView({ block: 'nearest' }),
-        );
+        void tick().then(() => {
+          const row = document.querySelector<HTMLElement>(
+            `[data-row="${t.id}"] [data-testid="torrent-row"]`,
+          );
+          row?.scrollIntoView({ block: 'nearest' });
+          if (!mobile) row?.focus({ preventScroll: true });
+        });
       }
     }
   }
@@ -454,14 +468,34 @@
             aria-label="Change color theme"
             onclick={() =>
               (theme = theme === 'system' ? 'dark' : theme === 'dark' ? 'light' : 'system')}
-            >{#if dark}<Moon size={14} />{:else}<Sun size={14} />{/if}</button
+            >{#if theme === 'system'}<Monitor size={16} />{:else if theme === 'dark'}<Moon
+                size={16}
+              />{:else}<Sun size={16} />{/if}</button
           >
         </div>
       </div>
     </aside>{/if}
-  <main class="main-pane">
+  <main
+    class="main-pane"
+    class:stale={client.ready && !client.online}
+    inert={mobile &&
+      client.selected.length === 1 &&
+      !!client.focused &&
+      mobileSection === 'transfers'}
+  >
     {#if mobile && mobileSection === 'settings'}
-      <header class="mobile-page-header"><h1>Settings</h1></header>
+      <header class="mobile-page-header" class:settings-detail-header={mobileSettingsDetail}>
+        {#if mobileSettingsDetail}<button
+            class="icon-button"
+            aria-label="Back to settings"
+            onclick={() => (mobileSettingsDetail = false)}><ChevronLeft size={24} /></button
+          >{/if}
+        <h1>
+          {mobileSettingsDetail
+            ? { Limits: 'Bandwidth', Transfers: 'Downloads' }[settingsTab] || settingsTab
+            : 'Settings'}
+        </h1>
+      </header>
       <div class="mobile-page-scroll mobile-settings">{@render settingsContent()}</div>
     {:else if mobile && mobileSection === 'activity'}
       <header class="mobile-page-header">
@@ -475,7 +509,12 @@
         >
       </header>
       <div class="mobile-page-scroll activity-page">
-        <SpeedGraph serverHistory={client.historyOnServer} samples={client.samples} expanded />
+        <SpeedGraph
+          serverHistory={client.historyOnServer}
+          online={client.online}
+          samples={client.samples}
+          expanded
+        />
         <div class="activity-stats">
           <div>
             <span>Downloaded this session</span><b
@@ -543,7 +582,11 @@
           >
         </div>{/if}
       {#if client.ready}<div class="graph-wrap">
-          <SpeedGraph serverHistory={client.historyOnServer} samples={client.samples} />
+          <SpeedGraph
+            serverHistory={client.historyOnServer}
+            online={client.online}
+            samples={client.samples}
+          />
         </div>{/if}
       <div class="list-toolbar">
         {#if client.selected.length > 1}<span class="selection-count"
@@ -568,21 +611,7 @@
             aria-label="Clear label filter"
             onclick={() => (client.labelFilter = null)}>{client.labelFilter}<X size={14} /></button
           >{/if}
-        <div class="sort-control">
-          <select aria-label="Sort transfers" bind:value={client.sort}
-            ><option value="addedDate">Date added</option><option value="name">Name</option><option
-              value="rateDownload">Download speed</option
-            ><option value="percentDone">Progress</option><option value="sizeWhenDone">Size</option
-            ><option value="queuePosition">Queue order</option></select
-          ><button
-            class="tiny-button"
-            aria-label="Reverse sort direction"
-            onclick={() => (client.ascending = !client.ascending)}
-            >{#if client.ascending}<ArrowUpNarrowWide size={18} />{:else}<ArrowDownWideNarrow
-                size={18}
-              />{/if}</button
-          >
-        </div>
+        {@render sortControl()}
       </div>
       <div class="torrent-list" role="listbox" aria-label="Transfers" aria-multiselectable="true">
         {#each client.visible as t (t.id)}<div
@@ -661,6 +690,22 @@
     />{/if}
 </div>
 
+{#snippet sortControl()}<div class="sort-control">
+    <select aria-label="Sort transfers" bind:value={client.sort}
+      ><option value="addedDate">Date added</option><option value="name">Name</option><option
+        value="rateDownload">Download speed</option
+      ><option value="percentDone">Progress</option><option value="sizeWhenDone">Size</option
+      ><option value="queuePosition">Queue order</option></select
+    >
+    <button
+      class="tiny-button"
+      aria-label="Reverse sort direction"
+      onclick={() => (client.ascending = !client.ascending)}
+      >{#if client.ascending}<ArrowUpNarrowWide size={18} />{:else}<ArrowDownWideNarrow
+          size={18}
+        />{/if}</button
+    >
+  </div>{/snippet}
 {#if mobile}<div class="mobile-dock">
     <nav
       class="mobile-tabbar"
@@ -910,6 +955,7 @@
     bind:username
     bind:password
     bind:theme
+    bind:showDetail={mobileSettingsDetail}
     {saving}
     {mobile}
     {connect}
