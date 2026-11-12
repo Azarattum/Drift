@@ -5,7 +5,12 @@ import { torrent } from '../fixtures';
 const media = await readFile('tests/assets/playback.mp4');
 async function setup(
   page: Page,
-  options: { multiple?: boolean; unavailable?: boolean; invalidMedia?: boolean } = {},
+  options: {
+    multiple?: boolean;
+    unavailable?: boolean;
+    invalidMedia?: boolean;
+    partial?: boolean;
+  } = {},
 ) {
   const t = torrent({
     name: 'Northern Light',
@@ -15,7 +20,7 @@ async function setup(
       {
         name: 'Northern Light/01 - The coast.mp4',
         length: media.length,
-        bytesCompleted: media.length,
+        bytesCompleted: options.partial ? Math.floor(media.length * 0.8) : media.length,
       },
       ...(options.multiple
         ? [
@@ -105,7 +110,32 @@ test('real playback, Video.js controls, resume, keyboard and close cleanup', asy
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState))
     .toBeGreaterThanOrEqual(2);
+  await video.click({ position: { x: 90, y: 70 } });
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
+  await video.click({ position: { x: 90, y: 70 } });
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(false);
   await page.getByRole('button', { name: 'Pause', exact: true }).click();
+  await page.getByRole('button', { name: 'Seek forward 10 seconds', exact: true }).click();
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeGreaterThan(9);
+  await page.getByRole('button', { name: 'Seek forward 10 seconds', exact: true }).click();
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeGreaterThan(19);
+  await page.getByRole('button', { name: 'Seek backward 10 seconds', exact: true }).click();
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime)).toBeLessThan(12);
+  for (const colorScheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', colorScheme);
+    const colors = await page.evaluate(() => ({
+      controls: getComputedStyle(document.querySelector('.watch-controls')!).backgroundColor,
+      header: getComputedStyle(document.querySelector('.player-dialog .modal-header')!)
+        .backgroundColor,
+    }));
+    expect(colors.controls).toBe(colors.header);
+    await page.screenshot({ path: `test-results/player-themed-${colorScheme}.png` });
+  }
   await page.screenshot({ path: 'test-results/player-desktop.png' });
   await video.evaluate((v: HTMLVideoElement) => {
     v.currentTime = 25;
@@ -137,6 +167,86 @@ test('real playback, Video.js controls, resume, keyboard and close cleanup', asy
   await page.keyboard.press('Escape');
   await expect(page.locator('.player-dialog')).toHaveCount(0);
   expect(calls.some((c) => c.method === 'POST' && c.headers['x-drift-stream'] === '1')).toBe(true);
+});
+
+test('fullscreen fills the video area and overlays controls that hide and wake on activity', async ({
+  page,
+}) => {
+  await setup(page);
+  const enabled = await page.evaluate(
+    () =>
+      document.fullscreenEnabled ||
+      (document as Document & { webkitFullscreenEnabled?: boolean }).webkitFullscreenEnabled,
+  );
+  test.skip(!enabled, 'This browser uses native video fullscreen instead of element fullscreen');
+  const video = page.locator('.drift-player video');
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState))
+    .toBeGreaterThanOrEqual(2);
+  await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).click();
+  const canvas = page.locator('.watch-canvas');
+  const controls = page.locator('.watch-controls');
+  await expect(canvas).toHaveClass(/watch-fullscreen/);
+  const geometry = await canvas.evaluate((el) => {
+    const v = el.querySelector('video')!.getBoundingClientRect();
+    const c = el.querySelector('.watch-controls')!.getBoundingClientRect();
+    return {
+      videoTop: v.top,
+      videoBottom: v.bottom,
+      videoWidth: v.width,
+      viewportHeight: innerHeight,
+      viewportWidth: innerWidth,
+      controlsTop: c.top,
+      controlsBottom: c.bottom,
+    };
+  });
+  expect(geometry.videoTop).toBeCloseTo(0, 0);
+  expect(geometry.videoBottom).toBeCloseTo(geometry.viewportHeight, 0);
+  expect(geometry.videoWidth).toBeCloseTo(geometry.viewportWidth, 0);
+  expect(geometry.controlsTop).toBeLessThan(geometry.videoBottom);
+  expect(geometry.controlsBottom).toBeCloseTo(geometry.videoBottom, 0);
+  await page.mouse.move(120, 100);
+  await expect(controls).toHaveCSS('opacity', '0', { timeout: 5000 });
+  await page.mouse.move(180, 100);
+  await expect(controls).toHaveCSS('opacity', '1');
+  await video.click({ position: { x: 90, y: 70 } });
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
+  await page.waitForTimeout(2300);
+  await expect(controls).toHaveCSS('opacity', '1');
+  await video.click({ position: { x: 90, y: 70 } });
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(false);
+  await page.getByRole('button', { name: 'Pause', exact: true }).focus();
+  await page.keyboard.press('Tab');
+  await page.waitForTimeout(2300);
+  await expect(controls).toHaveCSS('opacity', '1');
+  await page.getByRole('button', { name: 'Exit fullscreen', exact: true }).click();
+  await expect(canvas).not.toHaveClass(/watch-fullscreen/);
+});
+
+test('buffering describes a browser wait without guessing which torrent bytes are missing', async ({
+  page,
+}) => {
+  await setup(page, { partial: true });
+  const video = page.locator('.drift-player video');
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState))
+    .toBeGreaterThanOrEqual(3);
+  await video.evaluate((v: HTMLVideoElement) => {
+    v.dispatchEvent(new Event('waiting'));
+    v.dispatchEvent(new Event('canplay'));
+  });
+  await page.waitForTimeout(450);
+  await expect(page.locator('.watch-buffering')).toHaveCount(0);
+  await video.evaluate((v: HTMLVideoElement) => {
+    Object.defineProperty(v, 'readyState', { configurable: true, value: 2 });
+    v.dispatchEvent(new Event('waiting'));
+  });
+  await expect(page.locator('.watch-buffering')).toHaveText('Buffering…');
+  await video.evaluate((v: HTMLVideoElement) => {
+    Reflect.deleteProperty(v, 'readyState');
+    v.dispatchEvent(new Event('canplay'));
+  });
+  await expect(page.locator('.watch-buffering')).toHaveCount(0);
 });
 
 test('multiple files, matching mobile theme, file switching and touch targets', async ({

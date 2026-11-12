@@ -43,11 +43,38 @@
   let source = $state('');
   let video = $state<HTMLVideoElement>();
   let canvas = $state<HTMLElement>();
+  let fullscreen = $state(false);
+  let keyboardControls = $state(false);
+  $effect(() => {
+    if (!canvas) return;
+    const update = () => {
+      const doc = document as Document & { webkitFullscreenElement?: Element };
+      fullscreen = (doc.fullscreenElement || doc.webkitFullscreenElement) === canvas;
+    };
+    update();
+    document.addEventListener('fullscreenchange', update);
+    document.addEventListener('webkitfullscreenchange', update);
+    return () => {
+      document.removeEventListener('fullscreenchange', update);
+      document.removeEventListener('webkitfullscreenchange', update);
+    };
+  });
   let paused = $state(true),
     waiting = $state(false),
     current = $state(0),
     duration = $state(0),
     muted = $state(false);
+  let bufferTimer: ReturnType<typeof setTimeout>;
+  function buffering() {
+    clearTimeout(bufferTimer);
+    bufferTimer = setTimeout(() => {
+      waiting = !!video && video.readyState < 3;
+    }, 350);
+  }
+  function buffered() {
+    clearTimeout(bufferTimer);
+    waiting = false;
+  }
   let resume = $state<number | null>(null);
   let listOpen = $state(false);
   let rate = $state(1);
@@ -128,6 +155,7 @@
   }
   function stop() {
     clearTimeout(monitorTimer);
+    buffered();
     save(true);
     if (video) {
       video.pause();
@@ -209,6 +237,7 @@
     phase = 'error';
   }
   function keys(e: KeyboardEvent) {
+    if (phase === 'ready') keyboardControls = true;
     if (phase !== 'ready' || !video || e.altKey || e.ctrlKey || e.metaKey || resume !== null)
       return;
     const target = e.target as HTMLElement;
@@ -380,6 +409,10 @@
         bind:this={canvas}
         use:fitPlayer
         class="watch-canvas"
+        class:watch-fullscreen={fullscreen}
+        class:watch-keyboard={keyboardControls}
+        onpointerdown={() => (keyboardControls = false)}
+        role="group"
         aria-label="Video player"
       >
         <!-- Captions are exposed when the media provides text tracks. RPC text is never HTML. -->
@@ -389,7 +422,7 @@
           src={source}
           playsinline
           crossorigin="use-credentials"
-          preload="metadata"
+          preload="auto"
           onloadedmetadata={metadata}
           ontimeupdate={() => {
             current = video?.currentTime || 0;
@@ -397,18 +430,19 @@
           }}
           onplaying={() => {
             paused = false;
-            waiting = false;
+            buffered();
             hasPlayed = true;
           }}
           onpause={() => {
             paused = true;
+            buffered();
             save(true);
           }}
-          oncanplay={() => (waiting = false)}
-          onwaiting={() => (waiting = true)}
-          onseeking={() => (waiting = true)}
+          oncanplay={buffered}
+          onwaiting={buffering}
+          onseeking={buffering}
           onseeked={() => {
-            waiting = false;
+            buffered();
             save(true);
           }}
           onvolumechange={() => (muted = !!video?.muted || video?.volume === 0)}
@@ -419,6 +453,14 @@
           onerror={mediaError}
         >
         </video>
+        <media-gesture type="tap" pointer="mouse" action="togglePaused" disabled={resume !== null}
+        ></media-gesture>
+        <media-gesture
+          type="doubletap"
+          pointer="mouse"
+          action="toggleFullscreen"
+          disabled={resume !== null}
+        ></media-gesture>
         {#if resume !== null}<div class="watch-overlay watch-resume">
             <span class="watch-overlay-icon"><RotateCcw size={26} /></span>
             <h3>Pick up where you left off</h3>
@@ -441,14 +483,14 @@
             role="status"
           >
             <LoaderCircle class="watch-spinner" size={25} /><span
-              >{duration <= 0
-                ? 'Loading video…'
-                : complete
-                  ? 'Buffering…'
-                  : 'Waiting for video data…'}</span
+              >{duration <= 0 ? 'Loading video…' : 'Buffering…'}</span
             >
           </div>{/if}
-        <media-controls class="watch-controls" class:watch-controls-blocked={resume !== null}>
+        <media-controls
+          class="watch-controls"
+          class:watch-controls-blocked={resume !== null}
+          visibility={fullscreen && !captionMenu ? 'auto' : 'always'}
+        >
           <media-controls-content>
             <media-time-slider aria-label="Seek video" class="watch-timeline"
               ><media-slider-track
@@ -464,13 +506,13 @@
               >
               <media-seek-button
                 class="watch-control watch-skip"
-                seconds="-10"
+                seconds={-10}
                 aria-label="Back 10 seconds"
                 ><RotateCcw size={19} /><small>10</small></media-seek-button
               >
               <media-seek-button
                 class="watch-control watch-skip"
-                seconds="10"
+                seconds={10}
                 aria-label="Forward 10 seconds"
                 ><RotateCw size={19} /><small>10</small></media-seek-button
               >
@@ -563,7 +605,7 @@
               >
               <media-fullscreen-button
                 class="watch-control watch-fullscreen"
-                aria-label="Toggle fullscreen"
+                aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
                 ><span class="when-windowed"><Maximize size={20} /></span><span
                   class="when-fullscreen"><Minimize size={20} /></span
                 ></media-fullscreen-button

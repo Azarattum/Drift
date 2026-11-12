@@ -3759,9 +3759,10 @@ dialog.player-dialog {
 .watch-canvas {
   position: relative;
   display: block;
-  background: #101114;
-  color: #f5f5fa;
-  --watch-accent: #a6b5ff;
+  background: #090a0c;
+  color: var(--text);
+  --watch-accent: var(--blue);
+  --watch-controls-space: 96px;
   isolation: isolate;
 }
 .watch-canvas video {
@@ -3771,14 +3772,16 @@ dialog.player-dialog {
   max-height: min(65vh, var(--watch-video-height, 65vh));
   object-fit: contain;
   background: #090a0c;
+  cursor: pointer;
 }
 .watch-controls,
 .watch-controls media-controls-content {
   display: block;
 }
 .watch-controls {
-  padding: 0 14px 8px;
-  background: #16171c;
+  padding: 0 16px 8px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
 }
 .watch-controls-blocked {
   visibility: hidden;
@@ -3787,7 +3790,7 @@ dialog.player-dialog {
   display: flex;
   align-items: center;
   gap: 2px;
-  min-height: 48px;
+  min-height: 44px;
 }
 .watch-control {
   display: inline-flex;
@@ -3795,15 +3798,16 @@ dialog.player-dialog {
   justify-content: center;
   width: 44px;
   height: 44px;
-  border-radius: 7px;
+  border-radius: 8px;
   cursor: pointer;
-  color: #eeeef5;
+  color: var(--secondary);
   flex-shrink: 0;
   outline-offset: -2px;
 }
 .watch-control:hover,
 .watch-control:focus-visible {
-  background: #ffffff12;
+  background: var(--hover);
+  color: var(--text);
 }
 .watch-control:focus-visible,
 .watch-canvas [role='slider']:focus-visible {
@@ -3854,7 +3858,7 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
 }
 .watch-time > span,
 .watch-time media-time[type='duration'] {
-  color: #9294a2;
+  color: var(--muted);
 }
 .watch-control-spacer {
   flex: 1;
@@ -3863,7 +3867,7 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   display: flex;
   align-items: center;
   position: relative;
-  height: 32px;
+  height: 44px;
   cursor: pointer;
   touch-action: none;
 }
@@ -3873,7 +3877,7 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   display: block;
   width: 100%;
   height: 4px;
-  background: #3b3d48;
+  background: var(--border);
   border-radius: 4px;
 }
 .watch-timeline media-slider-buffer,
@@ -3886,7 +3890,7 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
 }
 .watch-timeline media-slider-buffer {
   width: var(--media-slider-buffer, 0%);
-  background: #666978;
+  background: var(--strong-border);
 }
 .watch-timeline media-slider-fill,
 .watch-volume media-slider-fill {
@@ -3903,7 +3907,7 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   border-radius: 50%;
   background: var(--watch-accent);
   transform: translateX(-50%);
-  box-shadow: 0 0 0 3px #a6b5ff15;
+  box-shadow: 0 0 0 3px var(--selection);
 }
 .watch-volume {
   position: relative;
@@ -3928,55 +3932,56 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
 .watch-rate select {
   appearance: none;
   -webkit-appearance: none;
-  color: #eeeef5;
-  background: transparent;
+  color: var(--secondary);
+  background: var(--soft);
   height: 44px;
   min-width: 60px;
-  border: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   padding: 0 20px 0 9px;
   font-size: 12px;
   cursor: pointer;
 }
 .watch-rate option {
-  background: #22232a;
-  color: #fff;
+  background: var(--surface);
+  color: var(--text);
 }
 .watch-rate > svg {
   position: absolute;
   right: 6px;
   pointer-events: none;
-  color: #9294a2;
+  color: var(--muted);
 }
 .watch-big-play {
   position: absolute;
   left: 50%;
-  top: calc((100% - 88px) / 2);
+  top: calc((100% - var(--watch-controls-space)) / 2);
   transform: translate(-50%, -50%);
   display: grid;
   place-items: center;
-  width: 76px;
-  height: 76px;
+  width: 64px;
+  height: 64px;
   padding-left: 5px;
-  border: 1px solid #ffffff26;
-  border-radius: 50%;
-  background: #272a35e8;
-  color: #f3f4ff;
-  box-shadow: 0 4px 24px #0003;
+  border: 1px solid var(--strong-border);
+  border-radius: 12px;
+  background: rgba(var(--surface-rgb), 0.94);
+  color: var(--text);
+  box-shadow: var(--shadow);
 }
 .watch-big-play:hover {
-  background: #3c4258;
+  background: var(--hover);
 }
 .watch-big-play:active:not(:disabled) {
   transform: translate(-50%, -50%) scale(0.96);
 }
 .watch-overlay {
   position: absolute;
-  inset: 0 0 88px;
+  inset: 0 0 var(--watch-controls-space);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: #101114ed;
+  background: rgba(var(--surface-rgb), 0.96);
   padding: 24px;
   text-align: center;
   gap: 8px;
@@ -3988,7 +3993,7 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   width: 56px;
   height: 56px;
   border-radius: 14px;
-  background: #a6b5ff14;
+  background: var(--selection);
   color: var(--watch-accent);
   margin-bottom: 12px;
 }
@@ -3998,7 +4003,7 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   letter-spacing: -0.5px;
 }
 .watch-overlay p {
-  color: #adafbd;
+  color: var(--secondary);
   font-size: 13px;
 }
 .watch-overlay > div {
@@ -4010,22 +4015,22 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   min-height: 44px;
 }
 .watch-start-over {
-  color: #eeeef5;
-  border: 1px solid #484a55;
+  color: var(--text);
+  border: 1px solid var(--strong-border);
 }
 .watch-start-over:hover {
-  background: #ffffff12;
+  background: var(--hover);
 }
 .watch-buffering {
   position: absolute;
-  top: calc((100% - 88px) / 2);
+  top: calc((100% - var(--watch-controls-space)) / 2);
   left: 50%;
   transform: translate(-50%, -50%);
   display: flex;
   align-items: center;
   gap: 10px;
-  background: #15161ce8;
-  border: 1px solid #ffffff14;
+  background: rgba(var(--surface-rgb), 0.94);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 14px 18px;
   font-size: 13px;
@@ -4134,25 +4139,41 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
 .watch-file:hover .watch-file-play {
   color: var(--blue);
 }
-.watch-canvas:fullscreen {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+.watch-canvas.watch-fullscreen {
+  --watch-controls-space: 0px;
   width: 100%;
   height: 100%;
 }
-.watch-canvas:fullscreen video {
-  flex: 1;
-  min-height: 0;
+.watch-canvas.watch-fullscreen video {
+  width: 100%;
+  height: 100%;
   max-height: none;
+  aspect-ratio: auto;
 }
-.watch-canvas:fullscreen .watch-controls {
-  flex: 0 0 auto;
-  width: 100%;
+.watch-fullscreen .watch-controls {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 3;
+  padding: 0 20px 12px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  background: rgba(var(--surface-rgb), 0.94);
+  transition:
+    opacity 0.18s,
+    visibility 0.18s;
 }
-.watch-canvas:-webkit-full-screen {
-  width: 100%;
-  height: 100%;
+.watch-fullscreen .watch-controls:not([data-visible]) {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.watch-fullscreen.watch-keyboard .watch-controls:focus-within {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+.watch-fullscreen:not([data-controls-visible]):not(.watch-keyboard),
+.watch-fullscreen:not([data-controls-visible]):not(.watch-keyboard) video {
+  cursor: none;
 }
 @supports (max-height: 100dvh) {
   dialog.player-dialog {
@@ -4162,6 +4183,9 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
 @media (prefers-reduced-motion: reduce) {
   .watch-spinner {
     animation: none;
+  }
+  .watch-controls {
+    transition: none;
   }
 }
 @media (max-width: 600px) {
@@ -4196,6 +4220,9 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   .watch-canvas video {
     max-height: min(52vh, var(--watch-video-height, 52vh));
   }
+  .watch-canvas {
+    --watch-controls-space: 92px;
+  }
   .watch-controls {
     padding: 0 6px 4px;
   }
@@ -4222,7 +4249,7 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   }
   .watch-timeline {
     margin: 0 8px;
-    height: 32px;
+    height: 44px;
   }
   .watch-rate select {
     min-width: 54px;
@@ -4240,7 +4267,7 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
     gap: 4px;
   }
   .watch-overlay {
-    bottom: 84px;
+    bottom: var(--watch-controls-space);
     gap: 5px;
     padding: 12px;
   }
@@ -4302,9 +4329,9 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   max-width: 260px;
   padding: 5px;
   border-radius: 9px;
-  border: 1px solid #454753;
-  background: #24262e;
-  box-shadow: 0 5px 24px #0004;
+  border: 1px solid var(--strong-border);
+  background: var(--surface);
+  box-shadow: var(--shadow);
   z-index: 4;
 }
 .watch-caption-menu button {
@@ -4316,13 +4343,13 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   width: 100%;
   padding: 8px 12px;
   border-radius: 5px;
-  color: #f4f4fb;
+  color: var(--text);
   text-align: left;
   font-size: 12px;
 }
 .watch-caption-menu button:hover,
 .watch-caption-menu button:focus-visible {
-  background: #ffffff12;
+  background: var(--hover);
 }
 .watch-volume[data-hidden] {
   display: none;
