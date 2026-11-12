@@ -3002,9 +3002,15 @@ summary {
   }
   .settings-mobile .settings-group > h3 {
     color: var(--secondary);
-    margin-left: 14px;
+    margin-inline: 13px;
     font-size: 14px;
     font-weight: 500;
+  }
+  .settings-mobile .settings-group > p {
+    margin-inline: 13px;
+  }
+  .settings-mobile .settings-notice {
+    padding-inline: 13px;
   }
   .settings-detail-header {
     justify-content: flex-start;
@@ -3204,6 +3210,13 @@ summary {
   }
 }
 @media (max-width: 360px) {
+  .settings-mobile .settings-group > h3,
+  .settings-mobile .settings-group > p {
+    margin-inline: 12px;
+  }
+  .settings-mobile .settings-notice {
+    padding-inline: 12px;
+  }
   .torrent-row {
     grid-template-columns: 24px minmax(0, 1fr) 44px;
   }
