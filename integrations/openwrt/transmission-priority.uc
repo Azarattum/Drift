@@ -84,7 +84,7 @@ function save() {
 }
 
 let fields = [ 'id', 'hashString', 'labels', 'status', 'percentDone', 'error',
-    'metadataPercentComplete', ...SETTINGS ];
+    'metadataPercentComplete', 'rateDownload', 'rateUpload', ...SETTINGS ];
 let torrents = rpc('torrent-get', { fields: fields }).torrents;
 let current = {};
 for (let torrent in torrents) current[torrent.hashString] = torrent;
@@ -175,4 +175,32 @@ if (web && fs.stat(web)) {
         fs.chmod(file + '.tmp', 0644);
         fs.rename(file + '.tmp', file);
     }
+    // Reuse the existing torrent poll. Keep one hour of aggregate rates only;
+    // no torrent names, addresses, or extra RPC requests are recorded.
+    let ram = '/tmp/transmission-activity.json';
+    let historyFile = web + '/activity.json';
+    let history = null;
+    try { history = json(fs.readfile(ram) || fs.readfile(historyFile) || 'null'); } catch (e) {}
+    if (!history || history.version != 1 || type(history.samples) != 'array')
+        history = { version: 1, updated: 0, published: 0, samples: [] };
+    let now = time();
+    if (now - history.updated >= 10 || now < history.updated) {
+        let down = 0, up = 0;
+        for (let torrent in torrents) {
+            down += max(0, torrent.rateDownload || 0);
+            up += max(0, torrent.rateUpload || 0);
+        }
+        history.samples = filter(history.samples, s => type(s) == 'array' && length(s) == 3 && s[0] >= (now - 3600) * 1000 && s[0] <= now * 1000);
+        push(history.samples, [now * 1000, down, up]);
+        history.updated = now;
+        if (now - (history.published || 0) >= 30) {
+            history.published = now;
+            if (fs.writefile(historyFile + '.tmp', sprintf('%J\n', history))) {
+                fs.chmod(historyFile + '.tmp', 0644);
+                fs.rename(historyFile + '.tmp', historyFile);
+            }
+        }
+        fs.writefile(ram, sprintf('%J\n', history));
+    }
+
 }
