@@ -15,12 +15,17 @@ logs
 _.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
-# dotenv environment variable files
+# local environment and credentials
 .env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
+.env.*
+!.env.example
+!.env.*.example
+*.key
+*key.pem
+*.p12
+*.pfx
+id_rsa
+id_ed25519
 
 # caches
 .eslintcache
