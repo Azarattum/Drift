@@ -37,6 +37,8 @@
     type VideoFile,
   } from '../lib/playback';
   import { loadPlayerEngine } from '../lib/player-engine';
+  import { canEnhanceFormats, needsAudioDecoder, probeMatroskaAudio } from '../lib/media-format';
+  import type { FormatEngine } from '../lib/format-engine';
   import { fetchSubtitle, subtitleLabel, type SubtitleSource } from '../lib/subtitles';
   let { torrent, fileIndex, close }: { torrent: Torrent; fileIndex?: number; close: () => void } =
     $props();
@@ -47,6 +49,72 @@
   let phase = $state<'loading' | 'choose' | 'preparing' | 'ready' | 'error'>('loading');
   let message = $state('');
   let source = $state('');
+  let enhanced = $state(false);
+  let enhancing = $state(false);
+  let formatAttempted = false;
+  let formatProbed = false;
+  let formatEngine: FormatEngine | undefined;
+  let formatCleanup: Promise<void> = Promise.resolve();
+  let audioNotice = $state('');
+  async function enhanceFormat() {
+    if (!video || formatAttempted || !canEnhanceFormats() || phase !== 'ready') return false;
+    formatAttempted = true;
+    enhancing = true;
+    const target = video;
+    const signal = controller.signal;
+    const at = pendingSeek ?? target.currentTime;
+    const shouldPlay = resume === null && !userPaused;
+    const timer = setTimeout(() => {
+      if (signal.aborted || disposed || target !== video) return;
+      message = 'This video format could not be prepared. Try again or open it in your video app.';
+      phase = 'error';
+      stop();
+      controller.abort();
+    }, 45000);
+    target.pause();
+    buffered();
+    waiting = true;
+    try {
+      const { attachFormatEngine } = await import('../lib/format-engine');
+      if (signal.aborted || disposed) return false;
+      await formatCleanup;
+      prioritizeSoon();
+      const engine = await attachFormatEngine(target, source, signal, () => {
+        if (signal.aborted || disposed) return;
+        message =
+          'This video format could not be played. Try another browser or open it in your video app.';
+        phase = 'error';
+        stop();
+        controller.abort();
+      });
+      if (signal.aborted || disposed) {
+        await engine.destroy();
+        return false;
+      }
+      formatEngine = engine;
+      enhanced = true;
+      enhancing = false;
+      audioNotice = '';
+      if (at > 0) pendingSeek = at;
+      restored = false;
+      metadata();
+      if (!shouldPlay) target.pause();
+      return true;
+    } catch {
+      if (!signal.aborted && !disposed) {
+        enhancing = false;
+        waiting = false;
+        phase = 'error';
+        message =
+          'This video format could not be played. Try another browser or open it in your video app.';
+        stop();
+        controller.abort();
+      }
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   let priorityURL = '';
   let priorityTimer: ReturnType<typeof setTimeout>;
   let priorityRequest: AbortController | null = null;
@@ -150,6 +218,7 @@
     stallTimer = setTimeout(() => {
       if (
         !video ||
+        enhancing ||
         !selected ||
         userPaused ||
         resume !== null ||
@@ -345,6 +414,9 @@
     buffered();
     save(true);
     clearSubtitles();
+    const engine = formatEngine;
+    formatEngine = undefined;
+    if (engine) formatCleanup = engine.destroy().catch(() => {});
     if (video) {
       video.pause();
       video.removeAttribute('src');
@@ -370,6 +442,11 @@
     controller = new AbortController();
     const signal = controller.signal;
     selected = file;
+    enhanced = false;
+    enhancing = false;
+    formatAttempted = false;
+    formatProbed = false;
+    audioNotice = '';
     source = '';
     priorityURL = '';
     userPaused = false;
@@ -444,8 +521,19 @@
     }
   }
   function metadata() {
-    if (!video) return;
+    if (!video || enhancing) return;
     duration = video.duration;
+    if (!formatProbed && selected && /\.mkv$/i.test(selected.name)) {
+      formatProbed = true;
+      const target = video;
+      const signal = controller.signal;
+      void probeMatroskaAudio(source, signal).then(async (codec) => {
+        if (signal.aborted || disposed || target !== video || !needsAudioDecoder(codec, target))
+          return;
+        if (!canEnhanceFormats()) audioNotice = 'This browser can’t play the audio in this video.';
+        else await enhanceFormat();
+      });
+    }
     if (pendingSeek !== null) {
       const at = pendingSeek;
       pendingSeek = null;
@@ -466,14 +554,29 @@
     const missingPieces = waitingForPieces;
     const url = source;
     recoverySubtitle = externalSource(captions[captionIndex])?.index;
+    const signal = controller.signal;
+    buffered();
+    const status = await streamStatus(url, signal);
+    if (disposed || signal.aborted || source !== url) return;
+    const ready = status === 200 || status === 206;
+    if (
+      ready &&
+      !missingPieces &&
+      (code === 3 || code === 4) &&
+      !formatAttempted &&
+      canEnhanceFormats()
+    ) {
+      pendingSeek = at;
+      userPaused = !resumePlayback;
+      await enhanceFormat();
+      return;
+    }
     phase = 'error';
     message = 'Checking the stream connection…';
     stop();
     controller.abort();
     controller = new AbortController();
-    const signal = controller.signal;
-    const status = await streamStatus(url, signal);
-    if (disposed || signal.aborted) return;
+    const recoverySignal = controller.signal;
     const terminal: Record<number, string> = {
       401: 'Sign in to Transmission again to watch this video.',
       403: 'This connection is not allowed to stream.',
@@ -485,7 +588,6 @@
       message = terminal[status];
       return;
     }
-    const ready = status === 200 || status === 206;
     const reason =
       ready && !missingPieces && (code === 3 || code === 4)
         ? 'This video format can’t play in this browser. Try a compatible browser or open the file in your preferred video app.'
@@ -496,12 +598,20 @@
     }
     message = 'Reconnecting to the video…';
     stallTimer = setTimeout(() => {
-      if (!disposed && !signal.aborted) recover(at, reason, resumePlayback);
+      if (!disposed && !recoverySignal.aborted) recover(at, reason, resumePlayback);
     }, 350);
   }
   function keys(e: KeyboardEvent) {
     if (phase === 'ready') keyboardControls = true;
-    if (phase !== 'ready' || !video || e.altKey || e.ctrlKey || e.metaKey || resume !== null)
+    if (
+      phase !== 'ready' ||
+      enhancing ||
+      !video ||
+      e.altKey ||
+      e.ctrlKey ||
+      e.metaKey ||
+      resume !== null
+    )
       return;
     const target = e.target as HTMLElement;
     if (target.closest('input,select,textarea,[contenteditable],[role="slider"]')) return;
@@ -614,9 +724,10 @@
     <div>
       <h3>{selected ? selected.name.split('/').at(-1) : torrent.name}</h3>
       <p>
-        {selected
-          ? torrent.name
-          : `${files.length || 'Finding'} video${files.length === 1 ? '' : 's'} · Choose a file to begin`}
+        {audioNotice ||
+          (selected
+            ? torrent.name
+            : `${files.length || 'Finding'} video${files.length === 1 ? '' : 's'} · Choose a file to begin`)}
       </p>
     </div>
     {#if selected}<span class="watch-header-status">
@@ -672,6 +783,7 @@
         bind:this={canvas}
         use:fitPlayer
         class="watch-canvas"
+        data-format-enhanced={enhanced || undefined}
         class:watch-fullscreen={fullscreen}
         class:watch-keyboard={keyboardControls}
         class:watch-resuming={resume !== null}
@@ -764,25 +876,28 @@
               ><button class="button watch-start-over" onclick={() => play(0)}>Start over</button>
             </div>
           </div>
-        {:else if paused && !waiting && duration > 0}<button
+        {:else if paused && !waiting && !enhancing && duration > 0}<button
             class="watch-big-play"
             aria-label={current >= duration && duration > 0 ? 'Replay video' : 'Play video'}
             onclick={() => play()}><Play size={30} fill="currentColor" /></button
           >{/if}
-        {#if (waiting || duration <= 0) && resume === null}<div
+        {#if (waiting || enhancing || duration <= 0) && resume === null}<div
             class="watch-buffering"
             role="status"
           >
             <LoaderCircle class="watch-spinner" size={25} /><span
-              >{waitingForPieces
-                ? 'Waiting for download…'
-                : duration <= 0
-                  ? 'Loading video…'
-                  : 'Buffering…'}</span
+              >{enhancing
+                ? 'Preparing playback…'
+                : waitingForPieces
+                  ? 'Waiting for download…'
+                  : duration <= 0
+                    ? 'Loading video…'
+                    : 'Buffering…'}</span
             >
           </div>{/if}
         <media-controls
           class="watch-controls"
+          inert={enhancing}
           class:watch-controls-blocked={resume !== null}
           visibility={fullscreen && !captionMenu ? 'auto' : 'always'}
         >
@@ -893,12 +1008,13 @@
                         >{/each}
                     </div>{/if}
                 </div>{/if}
-              <media-airplay-button class="watch-control watch-airplay" aria-label="AirPlay"
-                ><Airplay size={20} /></media-airplay-button
-              >
-              <media-pip-button class="watch-control watch-pip" aria-label="Picture in picture"
-                ><PictureInPicture2 size={20} /></media-pip-button
-              >
+              {#if !enhanced}<media-airplay-button
+                  class="watch-control watch-airplay"
+                  aria-label="AirPlay"><Airplay size={20} /></media-airplay-button
+                >
+                <media-pip-button class="watch-control watch-pip" aria-label="Picture in picture"
+                  ><PictureInPicture2 size={20} /></media-pip-button
+                >{/if}
               <media-fullscreen-button
                 class="watch-control watch-fullscreen"
                 aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}

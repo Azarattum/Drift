@@ -19,7 +19,7 @@
 - **Activity.** Follow download and upload charts, current speeds, and session totals.
 - **Desktop and mobile.** Keyboard shortcuts and context menus on desktop. Touch controls and bottom navigation on phones.
 - **Themes.** Light, dark, or system theme across the app and player. Settings save as you change them.
-- **Video playback.** Watch complete or downloading files and resume where you left off. Requires the optional streaming companion and a browser that supports the file's codecs.
+- **Video playback.** Watch complete or downloading files and resume where you left off. An optional browser decoder adds formats such as DTS audio where supported; it loads only when needed. Requires the streaming companion.
 - **Automatic bandwidth control.** Optional router scripts slow downloads when other network activity needs the connection. Full speed bypasses those limits for a download.
 - **Tracker VPN fallback.** The optional router integration retries failed IPv4 UDP trackers through a VPN and remembers successful routes. Peer traffic keeps its normal route.
 - **Static files.** The web client needs no application server, database, or separate account.
@@ -93,8 +93,8 @@ In Connection settings, set the RPC endpoint to `http://localhost:5173/transmiss
 
 Credentials stay in memory. For a separate web host, allow RPC requests through a
 proxy or CORS and expose `X-Transmission-Session-Id`. Use HTTPS for remote RPC
-connections that carry credentials; the optional streaming companion currently
-requires a direct HTTP connection.
+connections that carry credentials. To stream over HTTPS, proxy the companion
+through HTTPS on the next port as well.
 
 Before submitting changes:
 
@@ -160,4 +160,5 @@ bun run release:notes v0.1.0 /tmp/drift-release-notes.md
 
 ## License
 
-[MIT](LICENSE). Third-party notices are included in [public/licenses](public/licenses).
+[MIT](LICENSE). Third-party notices are included in [public/licenses](public/licenses);
+the optional WASM codecs retain their LGPL license.

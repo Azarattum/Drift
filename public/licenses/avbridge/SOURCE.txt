@@ -1,0 +1,21 @@
+Optional browser codecs
+
+avbridge 2.14.0 (MIT wrapper): https://github.com/keishi/avbridge
+libav.js / FFmpeg WASM libraries (LGPL-2.1-or-later):
+https://github.com/Yahweasel/libav.js/tree/v6.8.8
+
+The complete LGPL text, upstream build recipe and build notes are in this
+folder. The webcodecs runtime is supplied by @libav.js/variant-webcodecs;
+the avbridge runtime includes DTS and other legacy decoders. Both are
+shipped as separate, replaceable assets under format-codecs/.
+
+Drift renames the ES module files from .mjs to .js and updates their relative
+references for static-server MIME compatibility. WASM binaries are unchanged.
+The avbridge wrapper patch is patches/avbridge@2.14.0.patch in Drift's source:
+it forwards authenticated/cancellable requests, disposes metadata probes,
+limits queued video frames to 16, fixes seek reset/preroll ordering, and uses
+the renamed module assets.
+
+To use a replacement runtime, set globalThis.AVBRIDGE_LIBAV_BASE to its base
+URL before opening a video. Compatible avbridge/ and webcodecs/ subdirectories
+must contain the matching .js module loaders and .wasm binaries.

@@ -8,16 +8,22 @@ or [tracker VPN retries](#tracker-vpn-fallback). The web client detects installe
 
 Watch while a file downloads, seek ahead, and resume later. Matching SRT and WebVTT
 subtitles are supported. The Rust companion serves verified pieces; decoding
-happens in the browser, with no transcoding.
+happens in the browser; the router does not transcode files.
 
 ![Drift’s built-in player with download progress and playback controls. Demo data.](../docs/images/integration-player.png)
 
 <sub>Film: [Big Buck Bunny](https://www.bigbuckbunny.org/), © 2008 Blender Foundation. [CC BY 3.0](https://peach.blender.org/about/); frame scaled for the screenshot.</sub>
 
 **Needs:** Transmission 4.1+, Linux 5.10+ with pidfd support, an explicit daemon
-configuration directory, and read access to download folders. Streaming currently
-requires direct HTTP. Both the RPC port and the next port must be reachable by the
+configuration directory, and read access to download folders. Both the RPC port
+and the next port must be reachable by the
 browser: 9091 → 9092, for example. RPC port 65535 is unsupported.
+
+Native playback works over LAN HTTP. Extra format support, including DTS audio,
+loads automatically when needed in browsers with WebCodecs, WebAssembly, and Web Audio.
+It requires HTTPS or localhost; older browsers keep native playback. For HTTPS,
+reverse-proxy both RPC and the companion on consecutive ports. The companion itself
+still serves HTTP. Canvas playback does not offer AirPlay or picture-in-picture.
 
 ### Install
 

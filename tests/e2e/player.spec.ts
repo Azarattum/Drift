@@ -81,7 +81,9 @@ test('media error budget renews after playback makes progress', async ({ page })
   await expect.poll(() => calls.filter((c) => c.method === 'POST').length).toBe(4);
 });
 
-const media = await readFile('tests/assets/playback.mp4');
+const nativeMedia = await readFile('tests/assets/playback.mp4');
+// Synthetic 1920×800 H.264 video and 48 kHz, 5.1 DTS tone generated with FFmpeg.
+const dtsMedia = await readFile('tests/assets/playback-dts.mkv');
 async function setup(
   page: Page,
   options: {
@@ -94,15 +96,17 @@ async function setup(
     mediaUnavailable?: boolean;
     priorityGate?: boolean;
     priorityWaiting?: boolean;
+    dts?: boolean;
   } = {},
 ) {
+  const media = options.dts ? dtsMedia : nativeMedia;
   const t = torrent({
     name: 'Northern Light',
     percentDone: 1,
     status: 0,
     files: [
       {
-        name: 'Northern Light/01 - The coast.mp4',
+        name: `Northern Light/01 - The coast.${options.dts ? 'mkv' : 'mp4'}`,
         length: media.length,
         bytesCompleted: options.partial ? Math.floor(media.length * 0.8) : media.length,
       },
@@ -150,6 +154,7 @@ async function setup(
       'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Allow-Headers': 'X-Drift-Stream, Range, Authorization',
       'Access-Control-Allow-Methods': 'GET, POST, HEAD, OPTIONS',
+      'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges',
     };
     if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
     if (path.includes('/play/'))
@@ -211,7 +216,7 @@ async function setup(
       body: media.subarray(start, end + 1),
       headers: {
         ...headers,
-        'Content-Type': 'video/mp4',
+        'Content-Type': options.dts ? 'video/x-matroska' : 'video/mp4',
         'Accept-Ranges': 'bytes',
         'Content-Length': String(end - start + 1),
         ...(range ? { 'Content-Range': `bytes ${start}-${end}/${media.length}` } : {}),
@@ -608,9 +613,7 @@ test('unsupported media explains the browser limitation and preserves a retry pa
   page,
 }) => {
   await setup(page, { invalidMedia: true });
-  await expect(page.getByRole('alert')).toContainText(
-    'This video format can’t play in this browser',
-  );
+  await expect(page.getByRole('alert')).toContainText('This video format');
   await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
 });
 
@@ -696,4 +699,187 @@ test('volume and mute survive reopening and a page reload', async ({ page }) => 
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => ({ volume: v.volume, muted: v.muted })))
     .toEqual({ volume: 0.23, muted: false });
+});
+
+test('native playback never downloads the optional format engine or WASM', async ({ page }) => {
+  const requests: string[] = [];
+  page.on('request', (request) => requests.push(request.url()));
+  await setup(page);
+  await expect
+    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeGreaterThan(0.2);
+  expect(requests.filter((url) => /format-engine|format-codecs|avbridge|\.wasm/.test(url))).toEqual(
+    [],
+  );
+});
+
+test('DTS audio uses the lazy decoder with existing play, volume, seek and cleanup controls', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium', 'The optional decoder requires WebCodecs VideoFrame.');
+  const requests: string[] = [];
+  const errors: string[] = [];
+  page.on('request', (request) => requests.push(request.url()));
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.addInitScript(() => {
+    const createGain = AudioContext.prototype.createGain;
+    const analysers: AnalyserNode[] = [];
+    Object.assign(window, { formatAnalysers: analysers });
+    AudioContext.prototype.createGain = function () {
+      const gain = createGain.call(this);
+      const connect = gain.connect.bind(gain);
+      gain.connect = ((destination: AudioNode) => {
+        if (destination === this.destination) {
+          const analyser = this.createAnalyser();
+          analyser.fftSize = 256;
+          analysers.push(analyser);
+          connect(analyser);
+          analyser.connect(destination);
+          return destination;
+        }
+        return connect(destination);
+      }) as typeof gain.connect;
+      return gain;
+    };
+  });
+  const { calls } = await setup(page, { dts: true });
+  const canvas = page.locator('.watch-canvas');
+  await expect(canvas).toHaveAttribute('data-format-enhanced', 'true', { timeout: 30000 });
+  expect(
+    requests.some((url) => url.includes('format-codecs/avbridge/') && url.endsWith('.wasm')),
+  ).toBe(true);
+  if (await page.locator('video').evaluate((v: HTMLVideoElement) => v.paused))
+    await page.getByRole('button', { name: 'Play', exact: true }).first().click();
+  await expect
+    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.currentTime), {
+      timeout: 15000,
+    })
+    .toBeGreaterThan(0.5);
+  const audioEnergy = () =>
+    page.evaluate(() => {
+      const analysers = (window as unknown as { formatAnalysers: AnalyserNode[] }).formatAnalysers;
+      return Math.max(
+        0,
+        ...analysers
+          .filter((a) => a.context.state === 'running')
+          .map((analyser) => {
+            const samples = new Float32Array(analyser.fftSize);
+            analyser.getFloatTimeDomainData(samples);
+            return Math.max(...samples.map(Math.abs));
+          }),
+      );
+    });
+  await expect.poll(audioEnergy).toBeGreaterThan(0.001);
+  await page.getByRole('button', { name: 'Pause', exact: true }).click();
+  await expect
+    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.paused))
+    .toBe(true);
+  await page.locator('video').evaluate((v: HTMLVideoElement) => {
+    v.volume = 0.25;
+    v.muted = false;
+    v.currentTime = 6;
+  });
+  await expect
+    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeGreaterThanOrEqual(5.8);
+  await page.getByRole('button', { name: 'Play', exact: true }).first().click();
+  await expect
+    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeGreaterThan(6.5);
+  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await expect(page.locator('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Watch video', exact: true }).click();
+  await expect(page.locator('.watch-canvas')).toHaveAttribute('data-format-enhanced', 'true');
+  await page.getByRole('button', { name: /^Resume from/ }).click();
+  await expect
+    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.currentTime), {
+      timeout: 15000,
+    })
+    .toBeGreaterThan(7);
+  await expect.poll(audioEnergy).toBeGreaterThan(0.001);
+  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await expect(page.locator('dialog')).toHaveCount(0);
+  const count = requests.filter((url) => url.includes('/v1/media/')).length;
+  await page.waitForTimeout(500);
+  expect(requests.filter((url) => url.includes('/v1/media/')).length).toBe(count);
+  expect(
+    calls
+      .filter((c) => c.method === 'GET' && c.url.includes('/media/'))
+      .every((c) => c.headers.cookie?.includes('drift_media=fixture-session')),
+  ).toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as unknown as { formatAnalysers: AnalyserNode[] }).formatAnalysers.every(
+          (a) => a.context.state === 'closed',
+        ),
+      ),
+    )
+    .toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('unavailable capabilities preserve native playback without loading codecs', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium');
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'VideoFrame', { value: undefined });
+  });
+  const requests: string[] = [];
+  page.on('request', (request) => requests.push(request.url()));
+  await setup(page, { dts: true });
+  await expect(page.locator('.watch-heading')).toContainText('This browser can’t play the audio');
+  await expect(page.locator('video')).toBeVisible();
+  expect(requests.some((url) => /format-engine|format-codecs|avbridge|\.wasm/.test(url))).toBe(
+    false,
+  );
+});
+
+test('missing optional codec assets fail clearly without repeated native reconnects', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium');
+  await page.route('**/format-codecs/**', (route) => route.fulfill({ status: 404, body: '' }));
+  const { calls } = await setup(page, { dts: true });
+  await expect(page.getByRole('alert')).toContainText('This video format could not be played', {
+    timeout: 15000,
+  });
+  expect(
+    calls.filter((call) => call.method === 'POST' && call.url.includes('/play/')),
+  ).toHaveLength(1);
+  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await expect(page.locator('dialog')).toHaveCount(0);
+});
+
+test('closing during codec loading never starts a decoder against a detached player', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium');
+  let requested!: () => void;
+  const started = new Promise<void>((resolve) => {
+    requested = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/format-codecs/**/*.wasm', async (route) => {
+    requested();
+    await gate;
+    await route.continue().catch(() => {});
+  });
+  const { calls } = await setup(page, { dts: true });
+  await started;
+  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  const count = calls.length;
+  release();
+  await expect(page.locator('dialog')).toHaveCount(0);
+  await page.waitForTimeout(1000);
+  expect(calls.length).toBe(count);
+  await expect(page.locator('.watch-canvas canvas')).toHaveCount(0);
 });
