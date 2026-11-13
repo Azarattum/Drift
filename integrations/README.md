@@ -165,7 +165,9 @@ writable. It must receive fresh `full-speed.json` and `activity.json` files.
 Retry failed IPv4 UDP trackers through an existing VPN. Successful routes are
 remembered; failed attempts are dropped. Peer connections keep their normal routes.
 
-![Tracker list with two successful VPN routes and one direct tracker. Demo data.](../docs/images/integration-trackers.png)
+<p align="center">
+  <img src="../docs/images/integration-trackers.png" width="520" alt="Drift tracker inspector with two successful VPN routes and one direct tracker. Demo data.">
+</p>
 
 ### Install
 
