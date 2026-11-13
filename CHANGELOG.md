@@ -5,6 +5,12 @@ Release tags and web/native package versions use the same semantic version.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-13
+
+### Fixed
+
+- Isolate playback recovery and daemon-version tests from background seeks and requests.
+
 ## [0.1.1] - 2026-11-13
 
 ### Fixed
