@@ -5,6 +5,13 @@ Release tags and web/native package versions use the same semantic version.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-13
+
+### Fixed
+
+- Align batch actions with transfer rows when the system reserves space for scrollbars.
+- Make playback recovery and saved-volume checks work across browser buffering and floating-point differences.
+
 ## [0.1.0] - 2026-11-13
 
 ### Added
