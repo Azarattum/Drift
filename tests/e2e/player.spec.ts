@@ -55,17 +55,14 @@ test('media error recovery preserves selected captions and speed', async ({ page
 test('media error budget renews after playback makes progress', async ({ page }) => {
   const { calls } = await setup(page);
   const fail = async (at: number) => {
-    await page.locator('video').evaluate(async (v: HTMLVideoElement, at) => {
-      v.currentTime = at;
-      await v.play();
-    }, at);
-    await expect
-      .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.seeking))
-      .toBe(false);
-    await page.locator('video').evaluate((v: HTMLVideoElement) => {
+    // Inject a network failure at a known playback position without racing a real seek.
+    // Real decoding and seeking are covered by the playback integration tests below.
+    await page.locator('video').evaluate((v: HTMLVideoElement, at) => {
+      Object.defineProperty(v, 'currentTime', { configurable: true, value: at });
+      v.dispatchEvent(new Event('playing'));
       Object.defineProperty(v, 'error', { configurable: true, value: { code: 2 } });
       v.dispatchEvent(new Event('error'));
-    });
+    }, at);
   };
   await expect
     .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.readyState))

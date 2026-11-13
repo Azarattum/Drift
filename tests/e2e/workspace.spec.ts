@@ -1249,6 +1249,7 @@ test('sequential download saves and reloads the backend mode and stays hidden on
       calls.some((c) => c.method === 'torrent-set' && c.arguments.sequential_download === false),
     )
     .toBe(true);
+  await page.goto('about:blank');
   const older = await server(page, true, { rpcVersion: 17 });
   await openOptions();
   await expect(sequential).toHaveCount(0);
