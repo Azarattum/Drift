@@ -1,152 +1,103 @@
 # Optional integrations
 
-[Drift](../README.md) works without these services. Install them separately on the
-Transmission host; the frontend build does not install services or change firewall
-rules. Drift shows their controls when it detects the corresponding capability.
-
-- [Video playback](#video-playback): watch downloads, seek, resume, and load subtitles.
-- [Bandwidth control](#bandwidth-control): automatic limits, Full speed, and activity history.
-- [Tracker VPN fallback](#tracker-vpn-fallback): retry failed trackers through an existing VPN.
-
-Commands below run from the repository root unless stated otherwise. Source files
-are in [openwrt/](openwrt/). The streaming companion has an installer; the router
-controllers need an existing OpenWrt configuration and service supervision.
+[Drift](../README.md) works without any of these. Add them to the Transmission
+host for [video playback](#video-playback), [automatic bandwidth control](#bandwidth-control),
+or [tracker VPN retries](#tracker-vpn-fallback). The web client detects installed services.
 
 ## Video playback
 
-Drift Stream is a Rust service for complete and downloading video files. It serves
-verified torrent pieces to the browser without transcoding. The browser must
-support the file's codecs.
+Watch while a file downloads, seek ahead, and resume later. Matching SRT and WebVTT
+subtitles are supported. The Rust companion serves verified pieces; decoding
+happens in the browser, with no transcoding.
 
-### Build and install
+![Drift’s built-in player with download progress and playback controls. Demo data.](../docs/images/integration-player.png)
 
-Requires Transmission 4.1+, Linux 5.10+ with pidfd support, an explicit Transmission
-configuration directory, and read access to the configured download directories.
-It uses direct HTTP on the RPC port plus one: RPC on 9091 means streaming on 9092.
-RPC port 65535 is unsupported. Both ports must be reachable by the browser.
+<sub>Film: [Big Buck Bunny](https://www.bigbuckbunny.org/), © 2008 Blender Foundation. [CC BY 3.0](https://peach.blender.org/about/); frame scaled for the screenshot.</sub>
 
-Install Bun and stable Rust with `rust-lld` on the build machine:
+**Needs:** Transmission 4.1+, Linux 5.10+ with pidfd support, an explicit daemon
+configuration directory, and read access to download folders. Streaming currently
+requires direct HTTP. Both the RPC port and the next port must be reachable by the
+browser: 9091 → 9092, for example. RPC port 65535 is unsupported.
+
+Build on your computer with Bun and stable Rust with `rust-lld`:
 
 ```sh
 bun integrations/openwrt/drift-stream/tasks.ts check
 bun integrations/openwrt/drift-stream/tasks.ts build
 ```
 
-The default target is `aarch64-unknown-linux-musl`. Pass another Linux/musl target
-after `build` if needed, such as `x86_64-unknown-linux-musl`.
+The default target is `aarch64-unknown-linux-musl`; pass another Linux/musl target
+after `build` if needed. Copy `integrations/openwrt/drift-stream/dist/` contents to
+a staging directory on the router, run `sh install.sh` there as root, then restart
+Transmission. The installer backs up and patches a recognized OpenWrt init script.
+It does not restart services or open firewall ports. The companion follows
+Transmission’s user, access settings, download roots, and process lifetime.
 
-Copy the contents of `integrations/openwrt/drift-stream/dist/` to a staging
-directory on the router. Run `sh install.sh` there as root, then restart
-Transmission when ready. This native build is separate from the frontend's `dist/`.
+Worth knowing:
 
-The installer backs up and patches a recognized `/etc/init.d/transmission` and
-installs the binary and `/usr/libexec/drift-stream.procd`. It stops if the init
-script or backup needs review. It does not restart Transmission or open ports.
-The companion runs with Transmission's user, group, and configuration directory;
-procd restarts it, and stopping Transmission stops both processes.
+- Playback marks the video and matching subtitles wanted, enables sequential
+  downloading, and resumes paused incomplete downloads. Closing the player leaves
+  these settings in place. Players of the same torrent share one download cursor.
+- Codec support depends on the browser. Missing pieces still need available peers;
+  the displayed download percentage is not buffered playback time.
+- Subtitle filenames must share the video’s directory and stem, such as
+  `Episode 01.en.srt`. UTF-8 and BOM-marked UTF-16 work; ASS styling and encoding
+  detection are unsupported.
+- Restart after changing access settings or download roots. Remove
+  `/usr/libexec/drift-stream.procd` and restart to disable streaming. Check the init
+  hook after OpenWrt package upgrades.
 
-Restart after changing access settings or download roots. To disable streaming,
-remove `/usr/libexec/drift-stream.procd` and restart Transmission. Check the init
-hook after package or firmware upgrades.
+<details>
+<summary>Checks and troubleshooting</summary>
 
-### Using the player
-
-Choose **Watch video** from a torrent or file menu, the hover controls, or the
-inspector's film button. Multiple videos open a file chooser. The player remembers
-position locally per server, torrent, and file and offers **Resume** or **Start over**.
-
-Starting playback marks the video and matching subtitles wanted, enables sequential
-downloading, and resumes a paused torrent if the video is incomplete. Missing
-ranges trigger explicit priority requests for playback and seeking. Closing the
-player cancels requests but leaves those download settings in place. Multiple
-players of one torrent share its sequential cursor.
-
-SRT and WebVTT files match videos by directory and filename stem, including language
-suffixes such as `Episode 01.en.srt`. Tracks support UTF-8 and BOM-marked UTF-16;
-conversion keeps timing and basic text formatting and removes styles and layout.
-Choose a track to fetch it; missing data retries while selected. Embedded subtitles
-depend on the browser. ASS styling, encoding detection, and subtitle offsets are
-not supported.
-
-### Access and troubleshooting
-
-The service reads Transmission's bind address, access policy, and download roots.
-Authenticated setups check credentials through RPC. File-scoped playback tickets
-support native media requests; changing download priority still requires an
-explicit authenticated request when RPC authentication is enabled. Allowed browser
-origins use the validated hostname and RPC or streaming port.
-
-Only files under configured roots are served. Path traversal, symlinks, hardlinks,
-and non-regular files are rejected. Responses contain verified pieces only; reads
-wait for missing pieces and stop on disconnect. The service trusts Transmission's
-verification and the host's disk writers. It does not independently rehash pieces.
-
-| Problem                 | Check                                                         |
-| ----------------------- | ------------------------------------------------------------- |
-| Service unavailable     | Companion process, adjacent port, and direct HTTP connection  |
-| Authentication rejected | Sign in again; credentials are checked through Transmission   |
-| Video not found         | Torrent, file index, and configured download roots            |
-| Waiting for data        | Verification has finished and peers have the requested pieces |
-| Unsupported video       | Browser codec support and a recognized video container        |
-| Subtitle unavailable    | Matching filename, downloaded pieces, and supported encoding  |
-
-### Checks and measurements
+If playback is unavailable, check the companion process, adjacent port, and HTTP
+connection. For rejected credentials, sign in again. For stalled playback, check
+verification status and piece availability before assuming a codec problem.
 
 `tasks.ts check` runs installer tests, Rust formatting, Clippy, and Rust tests.
-To measure a built companion on an OpenWrt host:
+For hardware measurements, build the companion and frontend, install local FFmpeg
+and Playwright Chromium, then run:
 
 ```sh
 bun integrations/openwrt/drift-stream/benchmark.ts root@router.local 19091 --player > stream-benchmark.json
 ```
 
-Requires SSH key access, local FFmpeg, and five free ports starting at the supplied
-port. For `--player`, also build the frontend and install Playwright Chromium.
-The script starts an isolated Transmission instance and temporary procd service,
-creates fixtures on the download disk, and removes its fixtures and services on
-exit. It leaves the production service running but consumes disk, CPU, and network
-capacity. Use a host where that load is acceptable.
+This needs SSH key access and five free ports starting at 19091. It creates an
+isolated Transmission instance, temporary services, and fixtures on the download
+disk, then cleans them up. Production Transmission stays running, but the test
+uses CPU, disk, and network capacity.
 
-Results include idle CPU and context-switch counters, resident memory, transfer
-throughput, range integrity, missing-piece scheduling, and process lifecycle
-checks. `--player` also exercises real playback, resume, and incomplete-file seeks.
-Record the binary, host, and workload with any result. LAN throughput and warm-cache
-samples do not establish WAN performance or physical-phone compatibility.
+</details>
 
 ## Bandwidth control
 
-The controller lowers Transmission's limits when other traffic or router resource
-use needs headroom. It also provides **Full speed** and one hour of activity history.
+Downloads yield when the network gets busy and recover after twenty quiet seconds.
+**Full speed** bypasses automatic limits for a selected download while the others
+keep yielding. The controller also records an hour of activity history.
 
-### Set up the controller
+![Bandwidth behavior: automatic limits during other traffic, no automatic cap on an idle network, and a selected download’s Full speed override.](../docs/images/integration-bandwidth.png)
 
-Requires OpenWrt with fw4/nftables, `transmission-remote`, `curl`, `ucode` with its
-`fs` and `socket` modules, and `snice`. The helpers assume external storage mounted
-at `/home` and locally permitted unauthenticated RPC. Authenticated deployments
-need credential handling added to the helpers.
+**Needs:** OpenWrt with fw4/nftables, `transmission-remote`, `curl`, `ucode` with
+`fs` and `socket` modules, `snice`, and external storage mounted at `/home`.
+These scripts assume locally permitted unauthenticated RPC; authenticated setups
+need credential handling added to the helpers. There is no turnkey installer.
 
-Install these files together; the priority helper imports the tracker module even
-if VPN retries are unused:
+1. Copy `transmission-yield`, `transmission-priority.uc`, and
+   `transmission-trackers.uc` from [openwrt/](openwrt/) to `/usr/libexec/`. Make
+   `transmission-yield` executable. All three files are required, even without VPN retries.
+2. Add a named `transmission_yield_traffic` byte counter to `inet fw4`, with rules
+   counting other traffic and excluding local Transmission and management polling.
+   Install `openwrt/transmission-yield-interactive.nft` under `/etc/nftables.d/` as
+   a fw4 table include for the second counter.
+3. Run `/usr/libexec/transmission-yield` under your service supervisor after storage
+   and firewall setup. The helper reads Transmission’s UCI RPC and `web_home`
+   settings. Its `DRIFT_RPC_URL` override and the shell’s `rpc` option must point
+   to the same daemon.
 
-| Source under `openwrt/`    | Install at                                     |
-| -------------------------- | ---------------------------------------------- |
-| `transmission-yield`       | `/usr/libexec/transmission-yield` (executable) |
-| `transmission-priority.uc` | `/usr/libexec/transmission-priority.uc`        |
-| `transmission-trackers.uc` | `/usr/libexec/transmission-trackers.uc`        |
+<details>
+<summary>Defaults and diagnosis</summary>
 
-Configure two named counters in `inet fw4`:
-
-- `transmission_yield_traffic`: bytes from other network traffic. Supply rules for
-  your network that exclude router-local Transmission traffic and management polling.
-- `transmission_yield_interactive`: forwarded UDP packets. Install
-  `openwrt/transmission-yield-interactive.nft` as a fw4 table include under
-  `/etc/nftables.d/`. It excludes DNS, DHCP, NTP, SSDP, and mDNS ports.
-
-Run the shell controller under your service supervisor after storage and firewall
-setup. No init script is supplied. The helper reads RPC and web-home settings from
-Transmission's UCI configuration; `DRIFT_RPC_URL` can override its RPC URL. The
-shell controller has its own `rpc` setting below. Both must reach the same daemon.
-
-Configure a `main` section in `/etc/config/transmission_yield`:
+Set overrides in `/etc/config/transmission_yield`:
 
 ```text
 config transmission_yield 'main'
@@ -161,62 +112,50 @@ config transmission_yield 'main'
     option maximum_cpu_percent '70'
 ```
 
-These are the defaults: rates are bytes/s or packets/s as named; limits and memory
-are KiB; interval and idle time are seconds. Either traffic threshold needs three
-consecutive samples. Resource pressure, missing counters, or counter resets apply
-limits immediately. Twenty quiet seconds remove the automatic limits. UDP rate is
-a heuristic for calls and games, so quiet sessions may fall below both thresholds.
+Limits and memory use KiB; times use seconds. Traffic must cross either threshold
+for three consecutive samples. CPU or memory pressure, missing counters, and
+counter resets apply limits immediately. UDP packet rate is a heuristic for calls
+and games; it excludes common discovery ports.
 
-### Full speed, history, and status
+Full speed settings are saved in `/home/.transmission-priority/state.json` and
+restored when the override ends, the download pauses, completes, or fails. Closing
+the browser does not stop the controller.
 
-**Full speed** uses the `router:full-speed` torrent label. The helper saves and
-restores affected settings in `/home/.transmission-priority/state.json` and clears
-overrides when the selected download stops, completes, fails, or loses its label.
-Other downloads retain their yielding limits. Closing the browser does not stop
-the controller.
+Check `/var/run/transmission-yield.status` and
+`/var/run/transmission-priority.status` for current state. Missing controls usually
+mean a helper failed, `/home` is unmounted, or the configured web home is not
+writable. It must receive fresh `full-speed.json` and `activity.json` files.
 
-The helper publishes `full-speed.json` and `activity.json` in Transmission's web
-home. History samples download/upload rates every ten seconds and publishes every
-thirty seconds; samples contain timestamps and rates, without torrent names or
-peer addresses. History lives in RAM and covers one hour.
-
-Inspect `/var/run/transmission-yield.status` for mode, reason, traffic, CPU, and
-memory. `/var/run/transmission-priority.status` lists active overrides. If controls
-are missing, check helper execution, the `/home` mount, writable web home, and
-fresh capability files. Missing counters keep conservative limits in place.
+</details>
 
 ## Tracker VPN fallback
 
-This extends the bandwidth helper; it needs no separate daemon. Requires its setup
-above, an existing default-route WireGuard or AmneziaWG WAN, VPN masquerading,
-`ip`, `nft`, `ubus`, and `conntrack`. Review routing identifiers before starting it.
+Retry failed IPv4 UDP trackers through an existing VPN. Successful routes are
+remembered; failed attempts are dropped. Peer connections keep their normal routes.
 
-In the tracker list, use the retry control for failed IPv4 UDP trackers. It appears
-when a fresh capability reports a compatible VPN and is disabled while no healthy
-tunnel is available or a retry is pending. The one-shot
-`router:tracker-vpn-retry` label requests the action through normal RPC.
+![Tracker list with two successful VPN routes and one direct tracker. Demo data.](../docs/images/integration-trackers.png)
 
-The helper temporarily routes failed trackers through the VPN and asks Transmission
-to reannounce. Successful announcements are remembered in
-`/home/.transmission-priority/tracker-vpn.json`; failures and retries pending after
-90 seconds lose their temporary routes. Removed trackers are pruned, and a later
-failed VPN announcement removes its remembered route. Ordinary labels stay intact.
+**Needs:** the bandwidth helper above, a default-route WireGuard or AmneziaWG WAN,
+VPN masquerading, and `ip`, `nft`, `ubus`, and `conntrack`. No extra daemon is needed.
+Check these reserved identifiers against your router before enabling the helper:
 
-Tunnel selection follows `/var/run/awg-policy.json` when present. Without it, the
-helper selects the active compatible default-route interface with the lowest
-metric. A policy with no healthy winner leaves retries unavailable.
+| Resource        | Reserved value             |
+| --------------- | -------------------------- |
+| nft table       | `inet drift_trackers`      |
+| Route table     | `31200`                    |
+| Rule priorities | `1391`, `1392`             |
+| Packet bits     | `0x01000000`, `0x02000000` |
 
-Only IPv4 UDP tracker discovery is selected by process UID, endpoint, and BEP15
-packet fields. Peer traffic, DHT, PEX, HTTP(S) trackers, and IPv6 keep their existing
-routes. Shared tracker endpoints share a discovery route. DNS refreshes each minute;
-private and loopback destinations are excluded.
+Tunnel selection follows `/var/run/awg-policy.json` when present, otherwise the
+active compatible default-route interface with the lowest metric. No healthy
+tunnel means retries are unavailable. HTTP(S) trackers, IPv6, DHT, and PEX are
+outside this integration’s scope.
 
-The helper owns nft table `inet drift_trackers`, route table `31200`, rule priorities
-`1391`/`1392`, and packet bits `0x01000000`/`0x02000000`. Check for conflicts with your
-routing and mark masks. Selected trackers have an unreachable fallback if the VPN
-disappears. The helper does not reload the firewall or replace global WAN policy.
+Retries expire after 90 seconds. Successful routes are stored in
+`/home/.transmission-priority/tracker-vpn.json`; a later failure removes them.
+Trackers sharing an endpoint share its discovery route. Selected tracker packets
+cannot fall back to another route if the VPN disappears.
 
-For diagnosis, inspect `full-speed.json`'s `trackerVpn` field, the saved state,
-`nft list table inet drift_trackers`, routing rules, and conntrack entries. A saved
-VPN indicator records a successful announcement; packet counters and conntrack
-show the route actually in use.
+For diagnosis, check `trackerVpn` in `full-speed.json`,
+`nft list table inet drift_trackers`, routing rules, and conntrack entries. The VPN
+badge records a successful announcement; counters show traffic actually using the route.
