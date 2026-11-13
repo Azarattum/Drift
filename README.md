@@ -19,6 +19,9 @@
 - **Live activity.** Download and upload charts, session totals, and transfer speeds.
 - **Desktop and mobile.** Desktop context menus and keyboard controls; mobile navigation and touch targets.
 - **Light, dark, or automatic.** Matching themes throughout, including settings and the player. Changes save automatically.
+- **Watch while it downloads.** A built-in video player with seeking and saved playback position. Requires the optional streaming companion; browser codec support applies.
+- **Bandwidth that makes room.** Optional router integration slows torrents during other network activity; Full speed overrides it for a download.
+- **A second route to peers.** Optional VPN fallback retries failed UDP trackers and remembers successful routes, while peer traffic stays on its normal route.
 - **Static files.** No frontend application server, database, or account to set up.
 
 ## Install
