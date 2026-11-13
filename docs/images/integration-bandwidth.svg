@@ -9,7 +9,8 @@
   </g>
   <g fill="none" stroke="#484850" stroke-width="1.5">
     <path d="M400 59h140m-6-5 6 5-6 5M830 59h140m-6-5 6 5-6 5"/>
-    <path d="m1029 46-10 14h10l-5 12 14-18h-10l5-8" stroke="#9caaff"/>
+    <!-- Lucide Zap (ISC), matching the app's Full speed icon. -->
+    <path transform="translate(1015 44)" d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z" stroke="#9caaff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
   <path d="M210 148H390C460 148 465 131 535 131H1240V165H535C465 165 460 152 390 152H210Z" fill="#65c5b1"/>
   <path d="M210 222H390C455 222 465 246 535 246H900C970 246 990 224 1050 224H1240V268H1050C990 268 970 250 900 250H535C465 250 455 274 390 274H210Z" fill="#9caaff"/>
