@@ -16,6 +16,9 @@ Release tags and web/native package versions use the same semantic version.
 
 ### Fixed
 
+- Connection changes cancel old RPC requests and reject stale responses, preventing retries or transfer actions from targeting the wrong server.
+- Switching Full speed between torrents preserves their original bandwidth limits.
+- RPC requests retain their timeout when a caller supplies a cancellation signal.
 - Stream recovery now expires stale download-wait state, renews retries after playback progresses, and preserves selected captions and playback speed.
 - Bandwidth diagram corners are transparent instead of white.
 

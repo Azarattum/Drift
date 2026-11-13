@@ -100,7 +100,32 @@ export class Client {
   labelFilter = $state<string | null>(null);
   sort = $state('addedDate');
   ascending = $state(false);
-  private polling = false;
+  private polling: number | null = null;
+  private connection = 0;
+  changeConnection(endpoint: string, username: string, password: string) {
+    this.connection++;
+    this.rpc.endpoint = endpoint;
+    this.rpc.username = username;
+    this.rpc.password = password;
+    this.polling = null;
+    this.detailRequest++;
+    this.sessionRequest++;
+    this.torrents = [];
+    this.selected = [];
+    this.busy = new Set();
+    this.details = null;
+    this.capabilities = null;
+    this.session = {};
+    this.stats = {};
+    this.online = false;
+    this.ready = false;
+    this.error = '';
+    this.startupFailed = false;
+    this.consecutiveFailures = 0;
+    this.startupAt = Date.now();
+    this.lastSession = this.lastDetail = this.lastCapabilityProbe = 0;
+    this.resetHistory();
+  }
   private lastSample = 0;
   private lastDetail = 0;
   private detailRequest = 0;
@@ -164,14 +189,16 @@ export class Client {
     }
   }
   async poll(force = false) {
-    if (this.polling) return;
-    this.polling = true;
+    if (this.polling !== null) return;
+    const connection = this.connection;
+    this.polling = connection;
     try {
       const now = Date.now();
       const [result, stats] = await Promise.all([
         this.rpc.call('torrent-get', { fields: overviewFields }),
         this.rpc.call('session-stats'),
       ]);
+      if (connection !== this.connection) return;
       this.torrents = result.torrents;
       this.stats = stats;
       this.selected = this.selected.filter((id) => this.torrents.some((t) => t.id === id));
@@ -191,21 +218,25 @@ export class Client {
       if (force || now - this.lastSession > 15000) {
         await this.loadSession();
       }
+      if (connection !== this.connection) return;
       if (
         this.focused &&
         (force || this.details?.id !== this.focused.id || now - this.lastDetail > 3500)
       )
         await this.loadDetails(this.focused.id);
+      if (connection !== this.connection) return;
       if (!this.focused) this.details = null;
       await this.loadCapabilities();
+      if (connection !== this.connection) return;
       await this.loadHistory();
     } catch (e) {
+      if (connection !== this.connection) return;
       this.online = false;
       this.consecutiveFailures++;
       this.startupFailed = this.consecutiveFailures >= 3 || Date.now() - this.startupAt > 5000;
       this.error = e instanceof Error ? e.message : 'Connection interrupted';
     } finally {
-      this.polling = false;
+      if (this.polling === connection) this.polling = null;
     }
   }
   queueOption(id: number | 'session', key: string, value: number | boolean | string, delay = 0) {
@@ -283,8 +314,10 @@ export class Client {
   private async loadSession() {
     const request = ++this.sessionRequest;
     const session = await this.rpc.call('session-get');
-    if (request === this.sessionRequest) this.session = session;
-    this.lastSession = Date.now();
+    if (request === this.sessionRequest) {
+      this.session = session;
+      this.lastSession = Date.now();
+    }
   }
   async loadDetails(id: number) {
     const request = ++this.detailRequest;
@@ -299,12 +332,13 @@ export class Client {
       });
       if (this.selected.at(-1) === id && request === this.detailRequest)
         this.details = r.torrents[0] || null;
-      this.lastDetail = Date.now();
+      if (request === this.detailRequest) this.lastDetail = Date.now();
     } catch (e) {
-      this.toast(String(e));
+      if (request === this.detailRequest) this.toast(String(e));
     }
   }
   async loadCapabilities() {
+    const connection = this.connection;
     const now = Date.now();
     if (now - this.lastCapabilityProbe < (this.capabilities ? 1500 : 30000)) return;
     this.lastCapabilityProbe = now;
@@ -314,6 +348,7 @@ export class Client {
       url.searchParams.set('t', String(Date.now()));
       const r = await fetch(url, { cache: 'no-store', signal: deadline.signal });
       const value = r.ok ? await r.json() : null;
+      if (connection !== this.connection) return;
       this.capabilities =
         value?.version === 1 &&
         typeof value.fullSpeed?.enabled === 'boolean' &&
@@ -323,7 +358,7 @@ export class Client {
           ? value
           : null;
     } catch {
-      this.capabilities = null;
+      if (connection === this.connection) this.capabilities = null;
     } finally {
       deadline.dispose();
     }
@@ -345,6 +380,7 @@ export class Client {
     this.lastSample = 0;
   }
   async loadHistory() {
+    const connection = this.connection;
     const now = Date.now();
     const key = `drift.history.${this.rpc.endpoint}`;
     if (this.historyEndpoint !== this.rpc.endpoint) {
@@ -366,12 +402,13 @@ export class Client {
       const url = new URL('web/activity.json', new URL('.', this.rpc.endpoint));
       const response = await fetch(url, { cache: 'no-store', signal: deadline.signal });
       const value = response.ok ? await response.json() : null;
+      if (connection !== this.connection) return;
       const samples = historySamples(value, now);
       this.historyOnServer =
         !!samples && typeof value.updated === 'number' && Math.abs(now / 1000 - value.updated) < 90;
       if (samples) this.samples = mergeSamples(this.samples, samples, now);
     } catch {
-      this.historyOnServer = false;
+      if (connection === this.connection) this.historyOnServer = false;
     } finally {
       deadline.dispose();
     }
@@ -393,15 +430,18 @@ export class Client {
   }
   async action(method: string, ids = this.selected, args: Record<string, unknown> = {}) {
     if (!ids.length || !this.online) return;
+    const connection = this.connection;
     this.busy = new Set([...this.busy, ...ids]);
     try {
       await this.rpc.call(method, { ids, ...args });
+      if (connection !== this.connection) return;
       await this.poll(true);
     } catch (e) {
-      this.toast(e instanceof Error ? e.message : String(e));
+      if (connection === this.connection) this.toast(e instanceof Error ? e.message : String(e));
       throw e;
     } finally {
-      this.busy = new Set([...this.busy].filter((id) => !ids.includes(id)));
+      if (connection === this.connection)
+        this.busy = new Set([...this.busy].filter((id) => !ids.includes(id)));
     }
   }
   async safeAction(method: string, ids = this.selected, args: Record<string, unknown> = {}) {

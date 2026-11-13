@@ -298,11 +298,7 @@
       if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password)
         throw new Error('Use an http(s) URL; enter credentials in the fields below');
       await client.settleOptions();
-      if (client.rpc.endpoint !== u.href) client.resetHistory();
-      client.rpc.endpoint = u.href;
-      client.rpc.username = username;
-      client.rpc.password = password;
-      client.rpc.token = '';
+      client.changeConnection(u.href, username, password);
       await client.rpc.call('session-get');
       savePreference('drift.endpoint', u.href);
       await client.poll(true);

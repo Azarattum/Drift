@@ -15,9 +15,15 @@ test('request deadlines abort without AbortSignal.timeout and can release their 
     expired.dispose();
     const controller = new AbortController();
     const external = requestDeadline(5, controller.signal);
-    external.dispose();
     controller.abort();
     expect(external.signal.aborted).toBe(true);
+    external.dispose();
+    const lifetime = new AbortController();
+    const bounded = requestDeadline(5, lifetime.signal);
+    await Bun.sleep(20);
+    expect(bounded.signal.aborted).toBe(true);
+    expect(lifetime.signal.aborted).toBe(false);
+    bounded.dispose();
   } finally {
     Object.defineProperty(AbortSignal, 'timeout', descriptor);
   }

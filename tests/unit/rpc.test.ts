@@ -1,6 +1,37 @@
 import { expect, test } from 'bun:test';
 import { Transmission } from '../../src/lib/rpc';
 
+test('switching endpoint cancels old mutations before a session retry or stale response', async () => {
+  const original = globalThis.fetch;
+  const requests: string[] = [];
+  let resolve!: (response: Response) => void;
+  globalThis.fetch = (async (url) => {
+    requests.push(String(url));
+    return new Promise<Response>((done) => {
+      resolve = done;
+    });
+  }) as typeof fetch;
+  try {
+    const rpc = new Transmission('http://old.test/rpc');
+    const request = rpc.call('torrent-remove', { ids: [1], 'delete-local-data': true });
+    const rejected = request.catch((error: Error) => error);
+    rpc.endpoint = 'http://new.test/rpc';
+    resolve(
+      new Response('', { status: 409, headers: { 'X-Transmission-Session-Id': 'old-token' } }),
+    );
+    expect(await rejected).toBeInstanceOf(Error);
+    expect(requests).toEqual(['http://old.test/rpc']);
+    expect(rpc.token).toBe('');
+    const read = rpc.call('session-get');
+    const stale = read.catch((error: Error) => error);
+    rpc.endpoint = 'http://third.test/rpc';
+    resolve(Response.json({ result: 'success', arguments: { old: true } }));
+    expect(await stale).toBeInstanceOf(Error);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test('409 negotiation, token reuse, and session rotation preserve RPC arguments', async () => {
   const original = globalThis.fetch;
   const requests: any[] = [];

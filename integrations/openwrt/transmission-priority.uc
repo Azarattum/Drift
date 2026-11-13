@@ -119,6 +119,7 @@ for (let hash, saved in state.torrents) {
         let restore = { ids: [ torrent.id ], ...saved.settings,
             labels: filter(torrent.labels || [], label => label != LABEL) };
         rpc('torrent-set', restore);
+        for (let key, value in saved.settings) torrent[key] = value;
         torrent.labels = restore.labels;
     }
     delete state.torrents[hash];

@@ -9,31 +9,50 @@ export class RpcError extends Error {
   }
 }
 export class Transmission {
-  endpoint: string;
+  private address: string;
+  private connection = new AbortController();
+  get endpoint() {
+    return this.address;
+  }
+  set endpoint(value: string) {
+    this.connection.abort();
+    this.connection = new AbortController();
+    this.token = '';
+    this.address = value;
+  }
   token = '';
   username = '';
   password = '';
   constructor(endpoint = new URL('../rpc', location.href).href) {
-    this.endpoint = endpoint;
+    this.address = endpoint;
   }
   async call<T = any>(
     method: string,
     args: Record<string, unknown> = {},
     signal?: AbortSignal,
   ): Promise<T> {
-    const deadline = requestDeadline(12000, signal);
+    const connection = this.connection;
+    const endpoint = this.endpoint;
+    const username = this.username,
+      password = this.password;
+    const current = () => {
+      if (connection !== this.connection || connection.signal.aborted)
+        throw new RpcError('Connection changed; request cancelled');
+    };
+    const deadline = requestDeadline(12000, signal, connection.signal);
     try {
       for (let attempt = 0; attempt < 3; attempt++) {
+        current();
         const requestToken = this.token;
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
           'X-Transmission-Session-Id': requestToken,
         };
-        if (this.username)
-          headers.Authorization = `Basic ${btoa(unescape(encodeURIComponent(`${this.username}:${this.password}`)))}`;
+        if (username)
+          headers.Authorization = `Basic ${btoa(unescape(encodeURIComponent(`${username}:${password}`)))}`;
         let response: Response;
         try {
-          response = await fetch(this.endpoint, {
+          response = await fetch(endpoint, {
             method: 'POST',
             headers,
             body: JSON.stringify({ method, arguments: args }),
@@ -44,6 +63,7 @@ export class Transmission {
           if (signal?.aborted) throw error;
           throw new RpcError('Cannot reach Transmission. Check the address and connection.');
         }
+        current();
         if (response.status === 409) {
           const next = response.headers.get('X-Transmission-Session-Id');
           if (!next || next === requestToken)
@@ -61,6 +81,7 @@ export class Transmission {
             response.status,
           );
         const result = await response.json();
+        current();
         if (result.result !== 'success')
           throw new RpcError(result.result || 'Unexpected RPC response');
         return result.arguments as T;
