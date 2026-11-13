@@ -1,14 +1,16 @@
 <h1 align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
-    <img src="docs/images/logo-light.svg" alt="Drift" width="240">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.png">
+    <img src="docs/images/logo-light.png" alt="Drift" width="160">
   </picture>
 </h1>
 
 <p align="center"><strong>Actually good torrent UI.</strong></p>
 <p align="center">A Transmission web client that feels at home on your desktop and your phone.</p>
 
-![Drift in light and dark themes: desktop transfers and peer graph, desktop settings, and mobile transfers and activity. Demo data.](docs/images/showcase.png)
+<p align="center">
+  <img src="docs/images/showcase.png" width="100%" alt="Drift in light and dark themes: desktop transfers and peer graph, desktop settings, and mobile transfers and activity. Demo data.">
+</p>
 
 ## Features
 
