@@ -16,7 +16,10 @@ test('media URLs inherit the endpoint host and port without forwarding paths or 
   expect(streamBase('http://[::1]:9091/custom/rpc').href).toBe('http://[::1]:9092/');
   expect(() => streamBase('http://user:secret@router.local:9091/transmission/rpc')).toThrow();
   expect(() => streamBase('http://router.local:65535/transmission/rpc')).toThrow();
-  expect(() => streamBase('https://router.local/transmission/rpc')).toThrow();
+  expect(streamBase('https://router.local:9091/transmission/rpc').href).toBe(
+    'https://router.local:9092/',
+  );
+  expect(() => streamBase('file:///transmission/rpc')).toThrow();
 });
 
 test('playback preparation accepts only the selected file on the companion origin', async () => {

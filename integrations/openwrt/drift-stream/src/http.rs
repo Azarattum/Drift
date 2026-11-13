@@ -254,14 +254,28 @@ fn validate_context(
         let origin = origin
             .to_str()
             .map_err(|_| error(StatusCode::FORBIDDEN, "Invalid origin\n"))?;
-        let expected = |port| format!("http://{}:{}", authority.host(), port);
-        if origin != expected(state.config.rpc.port())
-            && origin != expected(state.config.listen.port())
-        {
+        if !allows_origin(
+            origin,
+            authority.host(),
+            state.config.rpc.port(),
+            state.config.listen.port(),
+        ) {
             return Err(error(StatusCode::FORBIDDEN, "Invalid origin\n"));
         }
     }
     Ok(())
+}
+
+// TLS may terminate at a reverse proxy. The host and the two configured ports
+// still define the allowed origins; forwarded headers cannot widen that boundary.
+fn allows_origin(origin: &str, host: &str, rpc_port: u16, media_port: u16) -> bool {
+    ["http", "https"].into_iter().any(|scheme| {
+        [rpc_port, media_port].into_iter().any(|port| {
+            origin == format!("{scheme}://{host}:{port}")
+                || (port == if scheme == "https" { 443 } else { 80 }
+                    && origin == format!("{scheme}://{host}"))
+        })
+    })
 }
 
 async fn checked(
@@ -826,6 +840,33 @@ fn response(status: StatusCode, mime: &'static str, text: &str) -> Response<Body
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn proxy_tls_keeps_the_origin_boundary() {
+        for origin in [
+            "http://router.local:9091",
+            "https://router.local:9091",
+            "https://router.local:9092",
+        ] {
+            assert!(allows_origin(origin, "router.local", 9091, 9092));
+        }
+        for origin in [
+            "https://other.local:9091",
+            "https://router.local:9999",
+            "https://router.local:9091/",
+            "null",
+            "file://router.local:9091",
+            "https://user@router.local:9091",
+        ] {
+            assert!(!allows_origin(origin, "router.local", 9091, 9092));
+        }
+        assert!(allows_origin(
+            "https://router.local",
+            "router.local",
+            443,
+            444
+        ));
+        assert!(allows_origin("https://[::1]:9091", "[::1]", 9091, 9092));
+    }
     #[test]
     fn byte_ranges_cover_browser_probes_and_overflow() {
         assert_eq!(parse_range(Some("bytes=0-1"), 100), Ok((0, 2, true)));

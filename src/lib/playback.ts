@@ -14,9 +14,9 @@ export function videoFiles(files: TorrentFile[] = []): VideoFile[] {
 }
 export function streamBase(endpoint: string): URL {
   const url = new URL(endpoint);
-  if (url.protocol !== 'http:' || url.username || url.password)
-    throw new Error('Streaming needs a direct HTTP connection to your Transmission device.');
-  const port = Number(url.port || 80);
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)
+    throw new Error('Streaming needs an HTTP or HTTPS connection to your Transmission device.');
+  const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
   if (port >= 65535) throw new Error('The media service address is unavailable.');
   url.port = String(port + 1);
   url.pathname = '/';
