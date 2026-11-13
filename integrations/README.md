@@ -19,19 +19,20 @@ configuration directory, and read access to download folders. Streaming currentl
 requires direct HTTP. Both the RPC port and the next port must be reachable by the
 browser: 9091 → 9092, for example. RPC port 65535 is unsupported.
 
-Build on your computer with Bun and stable Rust with `rust-lld`:
+### Install
+
+On your computer, from the repository root (Bun and stable Rust with `rust-lld`):
 
 ```sh
-bun integrations/openwrt/drift-stream/tasks.ts check
 bun integrations/openwrt/drift-stream/tasks.ts build
+ssh root@router.local 'mkdir -p /tmp/drift-stream'
+scp -r integrations/openwrt/drift-stream/dist/* root@router.local:/tmp/drift-stream/
+ssh root@router.local 'sh /tmp/drift-stream/install.sh && /etc/init.d/transmission restart'
 ```
 
-The default target is `aarch64-unknown-linux-musl`; pass another Linux/musl target
-after `build` if needed. Copy `integrations/openwrt/drift-stream/dist/` contents to
-a staging directory on the router, run `sh install.sh` there as root, then restart
-Transmission. The installer backs up and patches a recognized OpenWrt init script.
-It does not restart services or open firewall ports. The companion follows
-Transmission’s user, access settings, download roots, and process lifetime.
+Replace `router.local` with your router’s address. The default build is ARM64;
+pass `x86_64-unknown-linux-musl` after `build` for x86-64. The installer backs up
+and patches the OpenWrt Transmission init script. It does not open firewall ports.
 
 Worth knowing:
 
@@ -47,52 +48,83 @@ Worth knowing:
   `/usr/libexec/drift-stream.procd` and restart to disable streaming. Check the init
   hook after OpenWrt package upgrades.
 
-<details>
-<summary>Checks and troubleshooting</summary>
-
-If playback is unavailable, check the companion process, adjacent port, and HTTP
-connection. For rejected credentials, sign in again. For stalled playback, check
-verification status and piece availability before assuming a codec problem.
-
-`tasks.ts check` runs installer tests, Rust formatting, Clippy, and Rust tests.
-For hardware measurements, build the companion and frontend, install local FFmpeg
-and Playwright Chromium, then run:
-
-```sh
-bun integrations/openwrt/drift-stream/benchmark.ts root@router.local 19091 --player > stream-benchmark.json
-```
-
-This needs SSH key access and five free ports starting at 19091. It creates an
-isolated Transmission instance, temporary services, and fixtures on the download
-disk, then cleans them up. Production Transmission stays running, but the test
-uses CPU, disk, and network capacity.
-
-</details>
-
 ## Bandwidth control
 
 Downloads yield when the network gets busy and recover after twenty quiet seconds.
 **Full speed** bypasses automatic limits for a selected download while the others
 keep yielding. The controller also records an hour of activity history.
 
-![Bandwidth behavior: automatic limits during other traffic, no automatic cap on an idle network, and a selected download’s Full speed override.](../docs/images/integration-bandwidth.png)
+![Other traffic narrows the download flow; Full speed opens it for the selected download while other downloads stay limited.](../docs/images/integration-bandwidth.png)
 
 **Needs:** OpenWrt with fw4/nftables, `transmission-remote`, `curl`, `ucode` with
 `fs` and `socket` modules, `snice`, and external storage mounted at `/home`.
-These scripts assume locally permitted unauthenticated RPC; authenticated setups
-need credential handling added to the helpers. There is no turnkey installer.
+These scripts use locally permitted unauthenticated RPC and Transmission’s UCI
+`rpc_bind_address`, `rpc_port`, and `web_home`. Set those before starting; custom
+RPC authentication needs changes to the helpers.
 
-1. Copy `transmission-yield`, `transmission-priority.uc`, and
-   `transmission-trackers.uc` from [openwrt/](openwrt/) to `/usr/libexec/`. Make
-   `transmission-yield` executable. All three files are required, even without VPN retries.
-2. Add a named `transmission_yield_traffic` byte counter to `inet fw4`, with rules
-   counting other traffic and excluding local Transmission and management polling.
-   Install `openwrt/transmission-yield-interactive.nft` under `/etc/nftables.d/` as
-   a fw4 table include for the second counter.
-3. Run `/usr/libexec/transmission-yield` under your service supervisor after storage
-   and firewall setup. The helper reads Transmission’s UCI RPC and `web_home`
-   settings. Its `DRIFT_RPC_URL` override and the shell’s `rpc` option must point
-   to the same daemon.
+### Install
+
+On your computer, from the repository root:
+
+```sh
+scp integrations/openwrt/transmission-yield integrations/openwrt/transmission-priority.uc integrations/openwrt/transmission-trackers.uc root@router.local:/usr/libexec/
+scp integrations/openwrt/transmission-yield-interactive.nft root@router.local:/etc/nftables.d/
+ssh root@router.local
+```
+
+All three scripts are required: `transmission-priority.uc` imports
+`transmission-trackers.uc`, even when VPN retries are unused.
+
+On the router, install the helper packages ([OpenWrt 25.12+ uses apk](https://openwrt.org/docs/guide-user/additional-software/apk); older versions use `opkg install`):
+
+```sh
+apk add transmission-remote curl ucode-mod-fs ucode-mod-socket procps-ng-snice
+```
+
+Make the controller executable and add the other-traffic counter.
+This example counts routed traffic through the router; Transmission itself must
+run on the router so its traffic stays out of this counter.
+
+```sh
+chmod 755 /usr/libexec/transmission-yield
+cat > /etc/nftables.d/transmission-yield-traffic.nft <<'EOF_NFT'
+counter transmission_yield_traffic {}
+chain transmission_yield_traffic_forward {
+    type filter hook forward priority 10; policy accept;
+    counter name transmission_yield_traffic
+}
+EOF_NFT
+fw4 check && /etc/init.d/firewall reload
+```
+
+If you already have this named counter, keep its rules instead. The supplied
+[`transmission-yield-interactive.nft`](openwrt/transmission-yield-interactive.nft)
+counts forwarded UDP separately, excluding common discovery ports.
+
+Start it with procd so it survives closing SSH and starts at boot:
+
+```sh
+cat > /etc/init.d/transmission-yield <<'EOF_SERVICE'
+#!/bin/sh /etc/rc.common
+START=95
+USE_PROCD=1
+start_service() {
+    procd_open_instance
+    procd_set_param command /usr/libexec/transmission-yield
+    procd_set_param respawn
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_close_instance
+}
+EOF_SERVICE
+chmod 755 /etc/init.d/transmission-yield
+/etc/init.d/transmission-yield enable
+/etc/init.d/transmission-yield start
+cat /var/run/transmission-yield.status
+```
+
+Mount `/home` before starting. The default RPC address is `127.0.0.1:9091`; change
+`rpc` in the configuration below if your daemon uses another port.
 
 <details>
 <summary>Defaults and diagnosis</summary>
@@ -135,8 +167,17 @@ remembered; failed attempts are dropped. Peer connections keep their normal rout
 
 ![Tracker list with two successful VPN routes and one direct tracker. Demo data.](../docs/images/integration-trackers.png)
 
-**Needs:** the bandwidth helper above, a default-route WireGuard or AmneziaWG WAN,
-VPN masquerading, and `ip`, `nft`, `ubus`, and `conntrack`. No extra daemon is needed.
+### Install
+
+The `transmission-trackers.uc` module is installed and run by the controller above;
+there is no second service to start. It also needs a default-route WireGuard or AmneziaWG WAN,
+VPN masquerading, and `ip`, `nft`, `ubus`, and `conntrack`.
+Install the additional routing tools on the router:
+
+```sh
+apk add ip-full conntrack
+```
+
 Check these reserved identifiers against your router before enabling the helper:
 
 | Resource        | Reserved value             |
