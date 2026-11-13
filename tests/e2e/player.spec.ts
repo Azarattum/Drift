@@ -261,8 +261,12 @@ test('real playback, Video.js controls, resume, keyboard and close cleanup', asy
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
     .toBeGreaterThan(19);
+  await video.evaluate((v: HTMLVideoElement) => v.pause());
+  const beforeBackward = await video.evaluate((v: HTMLVideoElement) => v.currentTime);
   await page.getByRole('button', { name: 'Seek backward 10 seconds', exact: true }).click();
-  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime)).toBeLessThan(12);
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeLessThan(beforeBackward - 8);
   for (const colorScheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme });
     await expect(page.locator('html')).toHaveAttribute('data-theme', colorScheme);
