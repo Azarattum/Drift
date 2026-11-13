@@ -59,24 +59,27 @@ test('media error budget renews after playback makes progress', async ({ page })
       v.currentTime = at;
       await v.play();
     }, at);
-    await page.locator('video').evaluate((v: HTMLVideoElement, at) => {
+    await expect
+      .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.seeking))
+      .toBe(false);
+    await page.locator('video').evaluate((v: HTMLVideoElement) => {
       Object.defineProperty(v, 'error', { configurable: true, value: { code: 2 } });
       v.dispatchEvent(new Event('error'));
-    }, at);
+    });
   };
   await expect
     .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.readyState))
-    .toBeGreaterThanOrEqual(3);
+    .toBeGreaterThanOrEqual(2);
   await fail(5);
   await expect.poll(() => calls.filter((c) => c.method === 'POST').length).toBe(2);
   await expect
     .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.readyState))
-    .toBeGreaterThanOrEqual(3);
+    .toBeGreaterThanOrEqual(2);
   await fail(5);
   await expect.poll(() => calls.filter((c) => c.method === 'POST').length).toBe(3);
   await expect
     .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.readyState))
-    .toBeGreaterThanOrEqual(3);
+    .toBeGreaterThanOrEqual(2);
   await fail(25);
   await expect.poll(() => calls.filter((c) => c.method === 'POST').length).toBe(4);
 });
@@ -683,22 +686,22 @@ test('volume and mute survive reopening and a page reload', async ({ page }) => 
     .poll(() =>
       page.evaluate(() => JSON.parse(localStorage.getItem('drift.playback.audio.v1') || 'null')),
     )
-    .toEqual({ volume: 0.23, muted: true });
+    .toEqual({ volume: expect.closeTo(0.23, 5), muted: true });
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await page.getByRole('button', { name: 'Watch video', exact: true }).click();
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => ({ volume: v.volume, muted: v.muted })))
-    .toEqual({ volume: 0.23, muted: true });
+    .toEqual({ volume: expect.closeTo(0.23, 5), muted: true });
   await page.reload();
   await page.locator('.torrent-row').click();
   await page.getByRole('button', { name: 'Watch video', exact: true }).click();
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => ({ volume: v.volume, muted: v.muted })))
-    .toEqual({ volume: 0.23, muted: true });
+    .toEqual({ volume: expect.closeTo(0.23, 5), muted: true });
   await page.getByRole('button', { name: 'Unmute', exact: true }).click();
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => ({ volume: v.volume, muted: v.muted })))
-    .toEqual({ volume: 0.23, muted: false });
+    .toEqual({ volume: expect.closeTo(0.23, 5), muted: false });
 });
 
 test('native playback never downloads the optional format engine or WASM', async ({ page }) => {

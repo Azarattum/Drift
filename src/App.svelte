@@ -617,18 +617,20 @@
         {@render sortControl()}
       </div>
       {#if client.selected.length > 1}
-        <div class="selection-toolbar" role="toolbar" aria-label="Selected transfers">
-          <span class="selection-count">{client.selected.length} selected</span><button
-            class="text-button"
-            onclick={() => run(anyRunning ? 'torrent-stop' : 'torrent-start')}
-            >{#if allComplete && anyRunning}<Square size={13} fill="currentColor" />Stop seeding{:else if allComplete}<Play
-                size={13}
-              />Start seeding{:else if anyRunning}<Pause size={13} />Pause{:else}<Play
-                size={13}
-              />Resume{/if}</button
-          ><button class="text-button danger" onclick={requestRemove}
-            ><Trash2 size={13} />Remove</button
-          ><button class="text-button" onclick={() => (client.selected = [])}>Clear</button>
+        <div class="selection-toolbar-wrap">
+          <div class="selection-toolbar" role="toolbar" aria-label="Selected transfers">
+            <span class="selection-count">{client.selected.length} selected</span><button
+              class="text-button"
+              onclick={() => run(anyRunning ? 'torrent-stop' : 'torrent-start')}
+              >{#if allComplete && anyRunning}<Square size={13} fill="currentColor" />Stop seeding{:else if allComplete}<Play
+                  size={13}
+                />Start seeding{:else if anyRunning}<Pause size={13} />Pause{:else}<Play
+                  size={13}
+                />Resume{/if}</button
+            ><button class="text-button danger" onclick={requestRemove}
+              ><Trash2 size={13} />Remove</button
+            ><button class="text-button" onclick={() => (client.selected = [])}>Clear</button>
+          </div>
         </div>
       {/if}
       <div class="torrent-list" role="listbox" aria-label="Transfers" aria-multiselectable="true">
