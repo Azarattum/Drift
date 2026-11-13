@@ -33,6 +33,31 @@ export function clock(seconds: number): string {
     ? `${h}:${String(m).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`
     : `${m}:${String(n % 60).padStart(2, '0')}`;
 }
+type PlaybackAudio = { volume: number; muted: boolean };
+let audio: PlaybackAudio = { volume: 1, muted: false };
+const audioKey = 'drift.playback.audio.v1';
+export function playbackAudio(): PlaybackAudio {
+  try {
+    const stored = JSON.parse(preference(audioKey) || 'null');
+    if (
+      stored &&
+      Number.isFinite(stored.volume) &&
+      stored.volume >= 0 &&
+      stored.volume <= 1 &&
+      typeof stored.muted === 'boolean'
+    )
+      audio = { volume: stored.volume, muted: stored.muted };
+  } catch {
+    // Keep the session's audio settings when storage is unavailable or malformed.
+  }
+  return { ...audio };
+}
+export function savePlaybackAudio(volume: number, muted: boolean): void {
+  if (!Number.isFinite(volume) || volume < 0 || volume > 1) return;
+  audio = { volume, muted };
+  savePreference(audioKey, JSON.stringify(audio));
+}
+
 export type PlaybackPosition = { time: number; duration: number; updated: number };
 const storageKey = 'drift.playback.v1';
 let memory: Record<string, PlaybackPosition> = {};

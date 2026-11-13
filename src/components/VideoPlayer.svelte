@@ -25,6 +25,8 @@
   import { bytes, percent } from '../lib/format';
   import {
     clock,
+    playbackAudio,
+    savePlaybackAudio,
     playbackPosition,
     positionKey,
     prepareStream,
@@ -39,6 +41,7 @@
   let { torrent, fileIndex, close }: { torrent: Torrent; fileIndex?: number; close: () => void } =
     $props();
   const endpoint = client.rpc.endpoint;
+  const savedAudio = playbackAudio();
   let files = $state<VideoFile[]>([]);
   let selected = $state<VideoFile | null>(null);
   let phase = $state<'loading' | 'choose' | 'preparing' | 'ready' | 'error'>('loading');
@@ -72,10 +75,10 @@
       if (!request.signal.aborted && priorityURL === url)
         waitingForPieces = result?.pending ?? false;
     } catch {
+      if (priorityURL === url) waitingForPieces = false;
       /* The streaming connection and bounded recovery own user-facing errors. */
     } finally {
       clearTimeout(timer);
-      if (priorityURL === url) waitingForPieces = false;
       if (priorityRequest === request) priorityRequest = null;
       if (
         !disposed &&
@@ -111,7 +114,13 @@
     waiting = $state(false),
     current = $state(0),
     duration = $state(0),
-    muted = $state(false);
+    muted = $state(savedAudio.muted || savedAudio.volume === 0);
+  $effect(() => {
+    if (!video) return;
+    const settings = playbackAudio();
+    video.volume = settings.volume;
+    video.muted = settings.muted;
+  });
   let bufferTimer: ReturnType<typeof setTimeout>;
   let stallTimer: ReturnType<typeof setTimeout>;
   let reconnects = 0;
@@ -173,6 +182,7 @@
   let pendingSeek: number | null = null;
   let listOpen = $state(false);
   let rate = $state(1);
+  let recoverySubtitle: number | undefined;
   let captions = $state<TextTrack[]>([]);
   let captionMenu = $state(false);
   let captionIndex = $state(-1);
@@ -182,7 +192,6 @@
   let subtitleLoading = $state<number | null>(null);
   let captionLoad: AbortController | null = null;
   let captionRetry: ReturnType<typeof setTimeout>;
-  let recoverySubtitle: number | undefined;
   function cancelCaptionLoad() {
     clearTimeout(captionRetry);
     captionLoad?.abort();
@@ -395,6 +404,7 @@
       await tick();
       if (disposed || signal.aborted) return;
       buffering();
+      if (video) video.playbackRate = rate;
       if (previousSubtitle !== undefined) {
         const track = video?.querySelector<HTMLTrackElement>(
           `track[data-subtitle-index="${previousSubtitle}"]`,
@@ -404,7 +414,6 @@
             (t) => t.kind === 'subtitles' || t.kind === 'captions',
           );
           setCaption(captions.indexOf(track.track));
-      if (video) video.playbackRate = rate;
         }
       }
       if (file.bytesCompleted < file.length) monitor(file, signal);
@@ -456,6 +465,7 @@
     const resumePlayback = resume === null && !userPaused;
     const missingPieces = waitingForPieces;
     const url = source;
+    recoverySubtitle = externalSource(captions[captionIndex])?.index;
     phase = 'error';
     message = 'Checking the stream connection…';
     stop();
@@ -465,7 +475,6 @@
     const status = await streamStatus(url, signal);
     if (disposed || signal.aborted) return;
     const terminal: Record<number, string> = {
-    recoverySubtitle = externalSource(captions[captionIndex])?.index;
       401: 'Sign in to Transmission again to watch this video.',
       403: 'This connection is not allowed to stream.',
       404: 'This video is no longer available on your device.',
@@ -705,7 +714,11 @@
             else buffering();
             save(true);
           }}
-          onvolumechange={() => (muted = !!video?.muted || video?.volume === 0)}
+          onvolumechange={() => {
+            if (!video) return;
+            muted = video.muted || video.volume === 0;
+            savePlaybackAudio(video.volume, video.muted);
+          }}
           onended={() => {
             save(true);
             paused = true;

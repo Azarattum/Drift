@@ -667,3 +667,33 @@ test('mobile player keeps download status on one line and centered beside file i
     expect(status!.x + status!.width).toBeLessThanOrEqual(width - 16);
   }
 });
+
+test('volume and mute survive reopening and a page reload', async ({ page }) => {
+  await setup(page);
+  const video = page.locator('.drift-player video');
+  await expect(video).toBeVisible();
+  await video.evaluate((v: HTMLVideoElement) => {
+    v.volume = 0.23;
+    v.muted = true;
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() => JSON.parse(localStorage.getItem('drift.playback.audio.v1') || 'null')),
+    )
+    .toEqual({ volume: 0.23, muted: true });
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByRole('button', { name: 'Watch video', exact: true }).click();
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => ({ volume: v.volume, muted: v.muted })))
+    .toEqual({ volume: 0.23, muted: true });
+  await page.reload();
+  await page.locator('.torrent-row').click();
+  await page.getByRole('button', { name: 'Watch video', exact: true }).click();
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => ({ volume: v.volume, muted: v.muted })))
+    .toEqual({ volume: 0.23, muted: true });
+  await page.getByRole('button', { name: 'Unmute', exact: true }).click();
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => ({ volume: v.volume, muted: v.muted })))
+    .toEqual({ volume: 0.23, muted: false });
+});
