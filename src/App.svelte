@@ -79,6 +79,7 @@
   let addText = $state(''),
     addDir = $state(''),
     addPaused = $state(false),
+    addSequential = $state(false),
     addFiles = $state<File[]>([]),
     adding = $state(false);
   let deleteData = $state(false),
@@ -260,6 +261,7 @@
         const r = await client.rpc.call('torrent-add', {
           filename: normalizeMagnetLink(link),
           paused: addPaused,
+          sequential_download: addSequential,
           ...(addDir ? { 'download-dir': addDir } : {}),
         });
         last = (r['torrent-added'] || r['torrent-duplicate'])?.id;
@@ -272,6 +274,7 @@
         const r = await client.rpc.call('torrent-add', {
           metainfo: btoa(binary),
           paused: addPaused,
+          sequential_download: addSequential,
           ...(addDir ? { 'download-dir': addDir } : {}),
         });
         last = (r['torrent-added'] || r['torrent-duplicate'])?.id;
@@ -927,6 +930,9 @@
           bind:value={addDir}
         /></label
       ><label class="check-row"><input type="checkbox" bind:checked={addPaused} />Add paused</label>
+      <label class="check-row"
+        ><input type="checkbox" bind:checked={addSequential} />Sequential download</label
+      >
       <div class="modal-footer">
         <button class="button primary" disabled={adding || (!addText.trim() && !addFiles.length)}
           >{adding ? 'Adding…' : 'Add transfer'}<ChevronRight size={14} /></button
