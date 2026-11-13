@@ -2,6 +2,85 @@ import { readFile } from 'node:fs/promises';
 import { expect, type Page, test } from '@playwright/test';
 import { torrent } from '../fixtures';
 
+test('failed priority probes expire a previous download wait', async ({ page }) => {
+  const { calls } = await setup(page, { priorityWaiting: true, partial: true });
+  const video = page.locator('video');
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState))
+    .toBeGreaterThanOrEqual(3);
+  await page.clock.install();
+  await video.evaluate((v: HTMLVideoElement) => {
+    Object.defineProperty(v, 'readyState', { configurable: true, value: 2 });
+    v.dispatchEvent(new Event('waiting'));
+  });
+  await expect(page.locator('.watch-buffering')).toHaveText('Waiting for download…');
+  await page.route('**/v1/priority/**', (route) => route.abort());
+  await page.clock.fastForward(2000);
+  await expect(page.locator('.watch-buffering')).toHaveText('Buffering…');
+  await page.clock.fastForward(8500);
+  await expect
+    .poll(() => calls.filter((c) => c.method === 'POST' && c.url.includes('/play/')).length)
+    .toBe(2);
+});
+
+test('media error recovery preserves selected captions and speed', async ({ page }) => {
+  const { calls } = await setup(page, { subtitles: true });
+  await page.getByRole('button', { name: 'Subtitles', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'English', exact: true }).click();
+  await expect
+    .poll(() =>
+      page.locator('video').evaluate((v: HTMLVideoElement) => v.textTracks[0]?.cues?.length),
+    )
+    .toBe(1);
+  await page.getByLabel('Playback speed', { exact: true }).selectOption('1.5');
+  await expect
+    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.playbackRate))
+    .toBe(1.5);
+  await page.locator('video').evaluate((v: HTMLVideoElement) => {
+    Object.defineProperty(v, 'error', { configurable: true, value: { code: 2 } });
+    v.dispatchEvent(new Event('error'));
+  });
+  await expect
+    .poll(() => calls.filter((c) => c.method === 'POST' && c.url.includes('/play/')).length)
+    .toBe(2);
+  await expect
+    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.readyState))
+    .toBeGreaterThanOrEqual(2);
+  const recovered = await page
+    .locator('video')
+    .evaluate((v: HTMLVideoElement) => ({ mode: v.textTracks[0]?.mode, rate: v.playbackRate }));
+  expect(recovered).toEqual({ mode: 'showing', rate: 1.5 });
+});
+
+test('media error budget renews after playback makes progress', async ({ page }) => {
+  const { calls } = await setup(page);
+  const fail = async (at: number) => {
+    await page.locator('video').evaluate(async (v: HTMLVideoElement, at) => {
+      v.currentTime = at;
+      await v.play();
+    }, at);
+    await page.locator('video').evaluate((v: HTMLVideoElement, at) => {
+      Object.defineProperty(v, 'error', { configurable: true, value: { code: 2 } });
+      v.dispatchEvent(new Event('error'));
+    }, at);
+  };
+  await expect
+    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.readyState))
+    .toBeGreaterThanOrEqual(3);
+  await fail(5);
+  await expect.poll(() => calls.filter((c) => c.method === 'POST').length).toBe(2);
+  await expect
+    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.readyState))
+    .toBeGreaterThanOrEqual(3);
+  await fail(5);
+  await expect.poll(() => calls.filter((c) => c.method === 'POST').length).toBe(3);
+  await expect
+    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.readyState))
+    .toBeGreaterThanOrEqual(3);
+  await fail(25);
+  await expect.poll(() => calls.filter((c) => c.method === 'POST').length).toBe(4);
+});
+
 const media = await readFile('tests/assets/playback.mp4');
 async function setup(
   page: Page,

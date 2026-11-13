@@ -75,6 +75,7 @@
       /* The streaming connection and bounded recovery own user-facing errors. */
     } finally {
       clearTimeout(timer);
+      if (priorityURL === url) waitingForPieces = false;
       if (priorityRequest === request) priorityRequest = null;
       if (
         !disposed &&
@@ -181,6 +182,7 @@
   let subtitleLoading = $state<number | null>(null);
   let captionLoad: AbortController | null = null;
   let captionRetry: ReturnType<typeof setTimeout>;
+  let recoverySubtitle: number | undefined;
   function cancelCaptionLoad() {
     clearTimeout(captionRetry);
     captionLoad?.abort();
@@ -346,7 +348,9 @@
     close();
   }
   async function watch(file: VideoFile, reconnectAt?: number, recovery = false) {
-    const previousSubtitle = externalSource(captions[captionIndex])?.index;
+    const previousSubtitle =
+      externalSource(captions[captionIndex])?.index ?? (recovery ? recoverySubtitle : undefined);
+    const previousRate = rate;
     if (reconnectAt === undefined && !recovery) {
       reconnects = 0;
       lastReconnect = -1;
@@ -370,7 +374,7 @@
     duration = 0;
     paused = true;
     waiting = false;
-    rate = 1;
+    rate = recovery ? previousRate : 1;
     listOpen = false;
     captionMenu = false;
     captionIndex = -1;
@@ -400,6 +404,7 @@
             (t) => t.kind === 'subtitles' || t.kind === 'captions',
           );
           setCaption(captions.indexOf(track.track));
+      if (video) video.playbackRate = rate;
         }
       }
       if (file.bytesCompleted < file.length) monitor(file, signal);
@@ -460,6 +465,7 @@
     const status = await streamStatus(url, signal);
     if (disposed || signal.aborted) return;
     const terminal: Record<number, string> = {
+    recoverySubtitle = externalSource(captions[captionIndex])?.index;
       401: 'Sign in to Transmission again to watch this video.',
       403: 'This connection is not allowed to stream.',
       404: 'This video is no longer available on your device.',
@@ -475,7 +481,7 @@
       ready && !missingPieces && (code === 3 || code === 4)
         ? 'This video format can’t play in this browser. Try a compatible browser or open the file in your preferred video app.'
         : 'Video data is temporarily unavailable. Your position is saved. Try again shortly.';
-    if (reconnects >= 2 && downloaded <= lastRecoveryBytes) {
+    if (reconnects >= 2 && downloaded <= lastRecoveryBytes && at <= lastReconnect + 1) {
       message = reason;
       return;
     }
