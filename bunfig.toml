@@ -1,0 +1,12 @@
+[fmt]
+singleQuote = true
+trailingComma = "all"
+printWidth = 100
+ignorePatterns = [
+  "node_modules",
+  "dist",
+  "bun.lock",
+  "test-results",
+  "playwright-report",
+  "integrations/openwrt/*.uc",
+]
