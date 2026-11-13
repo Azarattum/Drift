@@ -11,6 +11,8 @@
     "test": "bun test tests/unit",
     "test:e2e": "bun --bun node_modules/@playwright/test/cli.js test",
     "test:legacy": "bun scripts/legacy.ts",
+    "release:prepare": "bun scripts/release.ts prepare",
+    "release:notes": "bun scripts/release.ts notes",
     "validate": "bun run check && bun run lint && bun run test && bun run build"
   },
   "devDependencies": {

@@ -21,17 +21,24 @@ browser: 9091 → 9092, for example. RPC port 65535 is unsupported.
 
 ### Install
 
-On your computer, from the repository root (Bun and stable Rust with `rust-lld`):
+Download the companion archive for your router from the
+[latest release](../../../releases/latest). Use
+`drift-stream-aarch64-unknown-linux-musl.tar.gz` for ARM64, or
+`drift-stream-x86_64-unknown-linux-musl.tar.gz` for x86-64. Check your device with
+`uname -m`; these binaries do not run on 32-bit ARM or MIPS. Release checksums are
+in `SHA256SUMS`. No Bun, Cargo, or compiler is needed to install a release.
+
+On your computer (ARM64 example):
 
 ```sh
-bun integrations/openwrt/drift-stream/tasks.ts build
+mkdir -p drift-stream
+tar -xzf drift-stream-aarch64-unknown-linux-musl.tar.gz -C drift-stream
 ssh root@router.local 'mkdir -p /tmp/drift-stream'
-scp -r integrations/openwrt/drift-stream/dist/* root@router.local:/tmp/drift-stream/
+scp -r drift-stream/* root@router.local:/tmp/drift-stream/
 ssh root@router.local 'sh /tmp/drift-stream/install.sh && /etc/init.d/transmission restart'
 ```
 
-Replace `router.local` with your router’s address. The default build is ARM64;
-pass `x86_64-unknown-linux-musl` after `build` for x86-64. The installer backs up
+Replace `router.local` with your router’s address. The installer backs up
 and patches the OpenWrt Transmission init script. It does not open firewall ports.
 
 Worth knowing:
@@ -54,7 +61,7 @@ Downloads yield when the network gets busy and recover after twenty quiet second
 **Full speed** bypasses automatic limits for a selected download while the others
 keep yielding. The controller also records an hour of activity history.
 
-![Other traffic narrows the download flow; Full speed opens it for the selected download while other downloads stay limited.](../docs/images/integration-bandwidth.png)
+![Other traffic narrows the download flow; Full speed opens it for the selected download while other downloads stay limited.](../docs/images/integration-bandwidth.svg)
 
 **Needs:** OpenWrt with fw4/nftables, `transmission-remote`, `curl`, `ucode` with
 `fs` and `socket` modules, `snice`, and external storage mounted at `/home`.
@@ -64,11 +71,14 @@ RPC authentication needs changes to the helpers.
 
 ### Install
 
-On your computer, from the repository root:
+Download `drift-openwrt-helpers.tar.gz` from the
+[latest release](../../../releases/latest). On your computer:
 
 ```sh
-scp integrations/openwrt/transmission-yield integrations/openwrt/transmission-priority.uc integrations/openwrt/transmission-trackers.uc root@router.local:/usr/libexec/
-scp integrations/openwrt/transmission-yield-interactive.nft root@router.local:/etc/nftables.d/
+mkdir -p drift-openwrt-helpers
+tar -xzf drift-openwrt-helpers.tar.gz -C drift-openwrt-helpers
+scp drift-openwrt-helpers/transmission-yield drift-openwrt-helpers/transmission-priority.uc drift-openwrt-helpers/transmission-trackers.uc root@router.local:/usr/libexec/
+scp drift-openwrt-helpers/transmission-yield-interactive.nft root@router.local:/etc/nftables.d/
 ssh root@router.local
 ```
 
@@ -202,3 +212,18 @@ cannot fall back to another route if the VPN disappears.
 For diagnosis, check `trackerVpn` in `full-speed.json`,
 `nft list table inet drift_trackers`, routing rules, and conntrack entries. The VPN
 badge records a successful announcement; counters show traffic actually using the route.
+
+## Building the companion from source
+
+For development or an architecture without a release asset, install Bun and a
+stable Rust toolchain with `rust-lld`, then run from the repository root:
+
+```sh
+bun integrations/openwrt/drift-stream/tasks.ts check
+bun integrations/openwrt/drift-stream/tasks.ts build
+```
+
+The default target is `aarch64-unknown-linux-musl`; pass another Rust target after
+`build` for a different Linux/musl architecture. Upload only the native project's
+generated `dist/` contents and use its `install.sh` as above. These outputs are
+separate from the frontend's `dist/`.

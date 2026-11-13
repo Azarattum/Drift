@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: 1.4.4
+
+jobs:
+  web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - name: Validate tag, versions and current changelog entry
+        run: bun scripts/release.ts notes "$GITHUB_REF_NAME" "$RUNNER_TEMP/release-notes.md"
+      - run: bun run validate
+      - run: bun node_modules/@playwright/test/cli.js install --with-deps chromium webkit
+      - run: bun run test:e2e --workers=2
+      - name: Package deployment files
+        run: |
+          mkdir release
+          tar -C dist -czf release/drift-web.tar.gz .
+          tar -C integrations/openwrt -czf release/drift-openwrt-helpers.tar.gz transmission-yield transmission-priority.uc transmission-trackers.uc transmission-yield-interactive.nft
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-web
+          path: release/*.tar.gz
+          if-no-files-found: error
+
+  legacy:
+    # Archived WebKit 15.4 is tested on macOS rather than modern Ubuntu libraries.
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - run: bun node_modules/playwright-legacy/cli.js install webkit
+      - run: bun run test:legacy
+
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-unknown-linux-musl, x86_64-unknown-linux-musl]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install stable Rust and expose its bundled linker
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          echo "$(rustc +stable --print sysroot)/lib/rustlib/$(rustc +stable -vV | sed -n 's/^host: //p')/bin" >> "$GITHUB_PATH"
+      - run: bun integrations/openwrt/drift-stream/tasks.ts check
+      - name: Build and package companion
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          bun integrations/openwrt/drift-stream/tasks.ts build "$TARGET"
+          mkdir release
+          tar -C integrations/openwrt/drift-stream/dist -czf "release/drift-stream-$TARGET.tar.gz" .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.target }}
+          path: release/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: [web, legacy, native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release
+      - run: bun scripts/release.ts notes "$GITHUB_REF_NAME" "$RUNNER_TEMP/release-notes.md"
+      - name: Publish complete release with checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum *.tar.gz > SHA256SUMS)
+          tag="$GITHUB_REF_NAME"
+          if gh release view "$tag" --json isDraft --jq '.isDraft' > "$RUNNER_TEMP/is-draft"; then
+            test "$(cat "$RUNNER_TEMP/is-draft")" = true || { echo 'Refusing to overwrite a published release'; exit 1; }
+          else
+            gh release create "$tag" --verify-tag --draft --title "Drift $tag" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+          gh release upload "$tag" release/*.tar.gz release/SHA256SUMS --clobber
+          if [[ "$tag" == *-* ]]; then
+            gh release edit "$tag" --notes-file "$RUNNER_TEMP/release-notes.md" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$tag" --notes-file "$RUNNER_TEMP/release-notes.md" --draft=false --prerelease=false --latest
+          fi

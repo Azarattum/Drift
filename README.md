@@ -26,21 +26,26 @@
 
 ## Install
 
-Install [Bun](https://bun.sh), then build the web client:
+Download **`drift-web.tar.gz`** from the [latest release](../../releases/latest).
+It contains the ready-to-install web client; Bun and build tools are not needed
+on your Transmission host. Release assets include `SHA256SUMS` for verification.
+
+Extract the archive into the directory you want Transmission to serve:
 
 ```sh
-bun install --frozen-lockfile
-bun run build
+mkdir -p /path/to/drift
+tar -xzf drift-web.tar.gz -C /path/to/drift
 ```
 
-Copy the contents of `dist/` to a directory on your Transmission host. Set
+If you extracted it on another computer, copy the extracted contents to your
+Transmission host. Set
 `TRANSMISSION_WEB_HOME` to that directory in the daemon's environment, then restart
 Transmission. Open `/transmission/web/` at your Transmission address.
 
 <details>
 <summary>On OpenWrt</summary>
 
-Copy `dist/` to the router, then point the Transmission service at it:
+Copy the extracted release files to the router, then point the service at them:
 
 ```sh
 uci set transmission.@transmission[0].web_home='/path/to/drift'
@@ -48,7 +53,7 @@ uci commit transmission
 /etc/init.d/transmission restart
 ```
 
-`/path/to/drift` should contain `index.html` and `assets/`, not another `dist/` folder.
+`/path/to/drift` should contain `index.html` and `assets/` directly.
 
 </details>
 
@@ -117,6 +122,41 @@ Deploy only the frontend's `dist/`. After building, you can upload it with
 `bun scripts/smoke.ts http://router.local:9091/transmission/web/` check uses a live
 daemon and creates and removes a synthetic torrent; run it only on a suitable
 host. Native integration builds and checks are in the [integration guide](integrations/README.md).
+
+### Releases
+
+Keep user-facing changes under `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
+Prepare a version with `bun run release:prepare 0.2.0` (or `0.2.0-rc.1` for a
+prerelease). This moves those notes into a dated version section and synchronizes
+the web package, companion manifest, and Cargo lockfile. Then run
+`bun run format` and `bun run validate`, review and commit the changes, and push
+the matching tag:
+
+```sh
+git tag -a v0.2.0 -m 'Release v0.2.0'
+git push origin main v0.2.0
+```
+
+The [release workflow](.github/workflows/release.yml) validates the tag against
+the web/native versions and current changelog section, runs the browser checks
+(including pinned WebKit 15.4), and builds the release archives. It publishes only
+after every job succeeds. Release descriptions contain that version's changelog
+entry, excluding Unreleased and older entries. Prereleases do not replace the
+latest stable release. No extra publishing secret is needed beyond GitHub's
+provided `GITHUB_TOKEN` with release-write permission.
+
+Assets: `drift-web.tar.gz`, `drift-stream-aarch64-unknown-linux-musl.tar.gz`,
+`drift-stream-x86_64-unknown-linux-musl.tar.gz`,
+`drift-openwrt-helpers.tar.gz`, and `SHA256SUMS`. ARM64 is the router-tested
+companion target; x86-64 is cross-built and checked in CI. Other architectures
+still require a source build. A failed publish can be rerun while its release is
+a draft; published releases are never overwritten.
+
+To inspect the current release description locally:
+
+```sh
+bun run release:notes v0.1.0 /tmp/drift-release-notes.md
+```
 
 ## License
 
