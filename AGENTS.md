@@ -1,5 +1,24 @@
-Use Bun for package management, scripts, and unit tests. Svelte 5 runes, TypeScript, Tailwind 4, and Vite's Svelte compiler build a static bundle. Keep runtime dependencies small. No server is required in production.
+# Repository guidelines
 
-Use conventional commits. Run `bun run validate` and relevant Playwright tests before shipping. Keep credentials and device-specific addresses out of source. Only deploy `dist/` to the target device. Respect reduced motion, keyboard input, and touch targets. RPC data is untrusted text; never render it as HTML.
+See [Development](README.md#development) for setup and test commands.
 
-Keep Safari 15.4 / iOS 15.4.1 as the minimum target. Feature-detect newer APIs, give required features fallbacks, and keep newer CSS effects behind compatible values or @supports. Preserve modern browser paths. Browser, CSS, or dependency changes require bun run test:legacy after building, using the pinned WebKit 15.4 engine (install with bun node_modules/playwright-legacy/cli.js install webkit). This engine check does not replace physical-device testing.
+## Tools and code
+
+- Use Bun for package management, scripts, and unit tests.
+- Use Svelte 5 runes, TypeScript, Tailwind CSS 4, and Vite's Svelte compiler. Keep runtime dependencies small and preserve the static frontend build.
+- Treat RPC data as untrusted text. Never render it as HTML.
+- Keep credentials and device-specific addresses out of source.
+- Use conventional commit messages.
+
+## Browser and interaction support
+
+- Keep Safari 15.4 / iOS 15.4.1 as the minimum target.
+- Feature-detect newer APIs and provide fallbacks. Put newer CSS effects behind compatible values or `@supports`, while preserving modern browser paths.
+- Respect reduced motion, keyboard input, visible focus, and touch targets.
+
+## Validation and deployment
+
+- Run `bun run validate` and relevant Playwright tests before shipping.
+- Browser, CSS, or dependency changes require `bun run test:legacy` after building. Use the pinned WebKit 15.4 engine, installed with `bun node_modules/playwright-legacy/cli.js install webkit`.
+- The archived engine check does not replace physical-device testing.
+- Only deploy `dist/` to the target device.

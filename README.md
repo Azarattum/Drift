@@ -61,12 +61,12 @@ Transmission 4.1. Requires Safari 15.4 / iOS 15.4.1 or a current Chrome or Firef
 **The standard client works without these integrations.** Install them separately
 on the Transmission host:
 
-- **[Streaming companion](integrations/openwrt/drift-stream/README.md).** A Rust service that streams video, prioritizes missing data for playback and seeking, and finds matching SRT/WebVTT subtitles. It does not transcode files.
-- **[Bandwidth controller](integrations/openwrt/transmission-yield.md).** OpenWrt scripts for automatic limits, Full speed, and recorded activity history.
-- **[Tracker VPN fallback](integrations/openwrt/transmission-trackers.md).** OpenWrt integration for an existing VPN. Supports IPv4 UDP trackers.
+- **[Streaming companion](integrations/README.md#video-playback).** A Rust service that streams video, prioritizes missing data for playback and seeking, and finds matching SRT/WebVTT subtitles. It does not transcode files.
+- **[Bandwidth controller](integrations/README.md#bandwidth-control).** OpenWrt scripts for automatic limits, Full speed, and recorded activity history.
+- **[Tracker VPN fallback](integrations/README.md#tracker-vpn-fallback).** OpenWrt integration for an existing VPN. Supports IPv4 UDP trackers.
 
-The router scripts assume a configured OpenWrt system. Read their requirements
-before installing them. Drift shows integration controls only when it detects the
+The [integration guide](integrations/README.md) covers requirements and setup.
+The router scripts assume a configured OpenWrt system. Drift shows integration controls only when it detects the
 corresponding service.
 
 ## Development
@@ -86,10 +86,37 @@ DRIFT_RPC_PROXY=http://router.local:9091 bun run dev
 
 In Connection settings, set the RPC endpoint to `http://localhost:5173/transmission/rpc`.
 
-Run `bun run validate` before submitting changes. For UI changes, also run
-`bun run test:e2e` and `bun run test:legacy` after building. Keep keyboard controls,
-touch targets, and reduced motion working. Browser tests use mock RPC data.
-[AGENTS.md](AGENTS.md) has the tooling and browser compatibility requirements.
+Credentials stay in memory. For a separate web host, allow RPC requests through a
+proxy or CORS and expose `X-Transmission-Session-Id`. Use HTTPS for remote RPC
+connections that carry credentials; the optional streaming companion currently
+requires a direct HTTP connection.
+
+Before submitting changes:
+
+```sh
+bun run validate
+```
+
+For UI changes, install the browser engines once, then run the browser checks:
+
+```sh
+bun node_modules/@playwright/test/cli.js install chromium webkit
+bun node_modules/playwright-legacy/cli.js install webkit
+bun run test:e2e
+bun run test:legacy
+```
+
+`validate` checks types, formatting, lint, unit tests, and the production build.
+Browser tests use mock RPC data; the legacy check runs the built app in WebKit
+15.4. Keep newer API and CSS fallbacks, keyboard access, visible focus, reduced
+motion, and 44 × 44 CSS pixel touch targets. Test on physical devices too.
+[AGENTS.md](AGENTS.md) contains the repository rules.
+
+Deploy only the frontend's `dist/`. After building, you can upload it with
+`bun scripts/deploy.ts user@host /path/to/drift`. The optional
+`bun scripts/smoke.ts http://router.local:9091/transmission/web/` check uses a live
+daemon and creates and removes a synthetic torrent; run it only on a suitable
+host. Native integration builds and checks are in the [integration guide](integrations/README.md).
 
 ## License
 
