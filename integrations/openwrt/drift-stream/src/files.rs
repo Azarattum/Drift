@@ -25,6 +25,9 @@ impl Root {
         })
     }
     pub fn file(&self, relative: &Path) -> io::Result<File> {
+        self.open_file(relative, false)
+    }
+    fn open_file(&self, relative: &Path, writable: bool) -> io::Result<File> {
         if relative.as_os_str().is_empty()
             || !relative
                 .components()
@@ -35,7 +38,12 @@ impl Root {
         let mut directory = self.directory.try_clone()?;
         let mut parts = relative.components().peekable();
         while let Some(part) = parts.next() {
-            let flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK;
+            let access = if writable && parts.peek().is_none() {
+                OFlags::RDWR
+            } else {
+                OFlags::RDONLY
+            };
+            let flags = access | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK;
             let flags = if parts.peek().is_some() {
                 flags | OFlags::DIRECTORY
             } else {
@@ -96,6 +104,15 @@ pub(crate) fn open_torrent_file(
     torrent: &Torrent,
     index: usize,
 ) -> Result<File, Error> {
+    find_torrent_file(roots, torrent, index, false)
+}
+
+fn find_torrent_file(
+    roots: &[Root],
+    torrent: &Torrent,
+    index: usize,
+    writable: bool,
+) -> Result<File, Error> {
     let entry = torrent.files.get(index).ok_or("Unknown file")?;
     let name = Path::new(&entry.name);
     // Explicit raw segments also reject '.' which Path::components normalizes away.
@@ -120,7 +137,7 @@ pub(crate) fn open_torrent_file(
             relative.clone(),
             PathBuf::from(format!("{}.part", relative.display())),
         ] {
-            match root.file(&candidate) {
+            match root.open_file(&candidate, writable) {
                 Ok(file) => return Ok(file),
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e.into()),
@@ -133,7 +150,7 @@ pub(crate) fn open_torrent_file(
             name.to_owned(),
             PathBuf::from(format!("{}.part", entry.name)),
         ] {
-            match root.file(&candidate) {
+            match root.open_file(&candidate, writable) {
                 Ok(file) => return Ok(file),
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e.into()),
@@ -141,6 +158,52 @@ pub(crate) fn open_torrent_file(
         }
     }
     Err("Video data is not available in the inherited roots".into())
+}
+
+/// Return the part of the file covered exclusively by its own torrent pieces.
+pub fn exclusive_range(torrent: &Torrent, index: usize) -> Option<(u64, u64)> {
+    let piece = torrent.piece_size;
+    if piece == 0 {
+        return None;
+    }
+    let offset = torrent
+        .files
+        .get(..index)?
+        .iter()
+        .try_fold(0u64, |sum, file| sum.checked_add(file.length))?;
+    let length = torrent.files.get(index)?.length;
+    let end = offset.checked_add(length)?;
+    let start = offset.div_ceil(piece).checked_mul(piece)?;
+    let exclusive_end = if torrent.files[index + 1..]
+        .iter()
+        .all(|file| file.length == 0)
+    {
+        end
+    } else {
+        end / piece * piece
+    };
+    (exclusive_end > start).then(|| (start - offset, exclusive_end - start))
+}
+
+pub fn open_discard_file(roots: &[Root], torrent: &Torrent, index: usize) -> Result<File, Error> {
+    find_torrent_file(roots, torrent, index, true)
+}
+
+#[cfg(target_os = "linux")]
+pub fn discard_data(file: &File, offset: u64, length: u64) -> io::Result<()> {
+    use rustix::fs::{FallocateFlags, fallocate};
+    fallocate(
+        file,
+        FallocateFlags::PUNCH_HOLE | FallocateFlags::KEEP_SIZE,
+        offset,
+        length,
+    )?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn discard_data(_file: &File, _offset: u64, _length: u64) -> io::Result<()> {
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 pub fn read_at(file: &File, position: u64, len: usize) -> io::Result<Vec<u8>> {

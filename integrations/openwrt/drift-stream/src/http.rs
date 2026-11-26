@@ -33,6 +33,7 @@ use tokio::{
 pub type Body = UnsyncBoxBody<Bytes, Error>;
 pub const CHUNK: usize = 64 * 1024;
 pub const CONNECTIONS: usize = 8;
+const STREAMS: u32 = 4;
 const WAIT: Duration = Duration::from_secs(30);
 
 pub struct State {
@@ -60,7 +61,7 @@ impl State {
             rpc: Rpc::new(config.clone()),
             config,
             roots,
-            streams: Arc::new(Semaphore::new(4)),
+            streams: Arc::new(Semaphore::new(STREAMS as usize)),
             leases: Mutex::new(BTreeMap::new()),
             next_request: AtomicU64::new(0),
         })
@@ -340,14 +341,14 @@ async fn checked(
         return Ok(response(
             StatusCode::OK,
             "application/json",
-            "{\"version\":1,\"media\":true,\"transcoding\":false}",
+            &json!({"version":1,"media":true,"transcoding":false,"discardFileData":cfg!(target_os = "linux")}).to_string(),
         ));
     }
     let parts: Vec<_> = path.split('/').collect();
     let subtitle = parts.get(2) == Some(&"subtitles");
     if parts.len() != if subtitle { 6 } else { 5 }
         || parts[1] != "v1"
-        || !["media", "play", "subtitles", "priority"].contains(&parts[2])
+        || !["media", "play", "subtitles", "priority", "discard"].contains(&parts[2])
         || parts[3].len() != 40
         || !parts[3].bytes().all(|b| b.is_ascii_hexdigit())
     {
@@ -359,8 +360,9 @@ async fn checked(
         .map_err(|_| error(StatusCode::NOT_FOUND, "Video not found\n"))?;
     let play = parts[2] == "play";
     let priority = parts[2] == "priority";
-    if ((play || priority) && request.method() != Method::POST)
-        || (!(play || priority)
+    let discard = parts[2] == "discard";
+    if ((play || priority || discard) && request.method() != Method::POST)
+        || (!(play || priority || discard)
             && request.method() != Method::GET
             && request.method() != Method::HEAD)
     {
@@ -370,7 +372,7 @@ async fn checked(
         ));
     }
     // A non-simple header prevents cross-site forms from changing torrent settings.
-    if (play || priority)
+    if (play || priority || discard)
         && request
             .headers()
             .get("x-drift-stream")
@@ -388,6 +390,20 @@ async fn checked(
             StatusCode::BAD_REQUEST,
             "Request bodies are not accepted\n",
         ));
+    }
+    if discard {
+        // Finish restoring the torrent state even if the browser disconnects.
+        let state = state.clone();
+        return tokio::spawn(
+            async move { discard_file(&state, &hash, index, auth.as_ref()).await },
+        )
+        .await
+        .map_err(|_| {
+            error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not delete file data\n",
+            )
+        })?;
     }
     let permit =
         if priority {
@@ -701,6 +717,177 @@ async fn checked(
         );
     }
     Ok(r)
+}
+
+async fn discard_file(
+    state: &Arc<State>,
+    hash: &str,
+    index: usize,
+    auth: Option<&HeaderValue>,
+) -> Result<Response<Body>, Failure> {
+    if !cfg!(target_os = "linux") {
+        return Err(error(
+            StatusCode::NOT_IMPLEMENTED,
+            "File data deletion is unavailable\n",
+        ));
+    }
+    // Serialize against requests that open torrent data and against other discards.
+    let _permits = state
+        .streams
+        .clone()
+        .try_acquire_many_owned(STREAMS)
+        .map_err(|_| {
+            error(
+                StatusCode::CONFLICT,
+                "Close video playback before deleting file data\n",
+            )
+        })?;
+    let torrent = state.rpc.torrent(hash, auth).await.map_err(rpc_error)?;
+    let resume = matches!(torrent.status, 3..=6);
+    if torrent.status != 0 && !resume {
+        return Err(error(
+            StatusCode::CONFLICT,
+            "Torrent is being verified. Try again shortly\n",
+        ));
+    }
+    let entry = torrent
+        .files
+        .get(index)
+        .ok_or(error(StatusCode::NOT_FOUND, "File not found\n"))?;
+    let (offset, length) = files::exclusive_range(&torrent, index).ok_or(error(
+        StatusCode::CONFLICT,
+        "This file contains no pieces that can be deleted independently\n",
+    ))?;
+    // Torrents may refer to the same local file without using a hard link.
+    let others = state
+        .rpc
+        .call(
+            "torrent-get",
+            json!({"fields":["hashString","downloadDir","files"]}),
+            auth,
+        )
+        .await
+        .map_err(rpc_error)?;
+    let rows = others
+        .get("torrents")
+        .and_then(|value| value.as_array())
+        .ok_or(error(
+            StatusCode::BAD_GATEWAY,
+            "Could not check other torrents for shared files\n",
+        ))?;
+    let path = std::path::Path::new(&torrent.download_dir).join(&entry.name);
+    for row in rows {
+        let other_hash = row
+            .get("hashString")
+            .and_then(|value| value.as_str())
+            .ok_or(error(StatusCode::BAD_GATEWAY, "Invalid torrent response\n"))?;
+        if other_hash.eq_ignore_ascii_case(hash) {
+            continue;
+        }
+        let directory = row
+            .get("downloadDir")
+            .and_then(|value| value.as_str())
+            .ok_or(error(StatusCode::BAD_GATEWAY, "Invalid torrent response\n"))?;
+        let entries = row
+            .get("files")
+            .and_then(|value| value.as_array())
+            .ok_or(error(StatusCode::BAD_GATEWAY, "Invalid torrent response\n"))?;
+        if entries.iter().any(|file| {
+            file.get("name")
+                .and_then(|value| value.as_str())
+                .is_some_and(|name| {
+                    (state.roots.len() > 1 && name == entry.name)
+                        || std::path::Path::new(directory).join(name) == path
+                })
+        }) {
+            return Err(error(
+                StatusCode::CONFLICT,
+                "Another torrent may be using this file\n",
+            ));
+        }
+    }
+    let ids = json!({"ids":[hash]});
+    let mut verify = false;
+    let cleanup = async {
+        if resume {
+            state
+                .rpc
+                .call("torrent-stop", ids.clone(), auth)
+                .await
+                .map_err(rpc_error)?;
+            // The stop RPC returns before Transmission has closed the torrent's files.
+            timeout(Duration::from_secs(10), async {
+                loop {
+                    let status = state
+                        .rpc
+                        .torrent(hash, auth)
+                        .await
+                        .map_err(rpc_error)?
+                        .status;
+                    if status == 0 {
+                        return Ok(());
+                    }
+                    sleep(Duration::from_millis(200)).await;
+                }
+            })
+            .await
+            .map_err(|_| error(StatusCode::CONFLICT, "Could not pause the torrent\n"))??;
+        }
+        let file = files::open_discard_file(&state.roots, &torrent, index).map_err(|_| {
+            error(
+                StatusCode::CONFLICT,
+                "Downloaded file is unavailable for deletion\n",
+            )
+        })?;
+        state
+            .rpc
+            .call(
+                "torrent-set",
+                json!({"ids":[hash],"files-unwanted":[index]}),
+                auth,
+            )
+            .await
+            .map_err(rpc_error)?;
+        let checked = state.rpc.torrent(hash, auth).await.map_err(rpc_error)?;
+        if checked.status != 0
+            || checked.download_dir != torrent.download_dir
+            || checked
+                .files
+                .get(index)
+                .is_none_or(|current| current.name != entry.name || current.length != entry.length)
+        {
+            return Err(error(
+                StatusCode::CONFLICT,
+                "Torrent changed during deletion\n",
+            ));
+        }
+        // Recheck piece availability after touching the file, even after a write error.
+        verify = true;
+        files::discard_data(&file, offset, length)
+            .map_err(|_| error(StatusCode::CONFLICT, "Could not free the file’s storage\n"))
+    }
+    .await;
+    if verify {
+        state
+            .rpc
+            .call("torrent-verify", ids.clone(), auth)
+            .await
+            .map_err(|_| error(StatusCode::BAD_GATEWAY, "Could not verify file deletion\n"))?;
+    }
+    if resume {
+        // Transmission honors this start after any queued verification completes.
+        state
+            .rpc
+            .call("torrent-start", ids, auth)
+            .await
+            .map_err(|_| error(StatusCode::BAD_GATEWAY, "Could not resume the torrent\n"))?;
+    }
+    cleanup?;
+    Ok(response(
+        StatusCode::OK,
+        "application/json",
+        "{\"verificationQueued\":true}",
+    ))
 }
 
 struct Media {

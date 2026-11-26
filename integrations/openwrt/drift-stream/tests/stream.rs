@@ -124,8 +124,30 @@ impl Fixture {
                             .unwrap();
                             let arguments = match value["method"].as_str().unwrap() {
                                 "session-get" => json!({"version":"4.1.3"}),
-                                "torrent-set" | "torrent-start" => {
+                                "torrent-stop" => {
                                     w.fetch_add(1, Ordering::SeqCst);
+                                    tokio::spawn(async move {
+                                        tokio::time::sleep(Duration::from_millis(50)).await;
+                                        s.store(0, Ordering::SeqCst);
+                                    });
+                                    json!({})
+                                }
+                                "torrent-verify" => {
+                                    w.fetch_add(1, Ordering::SeqCst);
+                                    assert_eq!(s.swap(1, Ordering::SeqCst), 0);
+                                    json!({})
+                                }
+                                "torrent-start" => {
+                                    w.fetch_add(1, Ordering::SeqCst);
+                                    s.store(4, Ordering::SeqCst);
+                                    json!({})
+                                }
+                                "torrent-set" => {
+                                    w.fetch_add(1, Ordering::SeqCst);
+                                    if let Some(files) = value["arguments"].get("files-unwanted") {
+                                        assert_eq!(*files, json!([1]));
+                                        assert_eq!(s.load(Ordering::SeqCst), 0);
+                                    }
                                     if let Some(piece) =
                                         value["arguments"]["sequential_download_from_piece"]
                                             .as_u64()
@@ -684,4 +706,50 @@ async fn media_sessions_are_opaque_scoped_and_still_checked_by_transmission() {
         .status(),
         401
     );
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn discarding_file_data_keeps_shared_pieces_and_restores_torrent_activity() {
+    let path = format!("/v1/discard/{HASH}/1");
+    let auth = ("authorization", "Basic dXNlcjpwYXNz");
+    let intent = ("x-drift-stream", "1");
+    for (initial, after, writes) in [(0, 1, 2), (4, 4, 4)] {
+        let f = Fixture::new(true).await;
+        f.status.store(initial, Ordering::SeqCst);
+        assert_eq!(f.request("POST", &path, &[auth]).await.status(), 403);
+        let response = f.request("POST", &path, &[auth, intent]).await;
+        let status = response.status();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(status, 200, "{body:?}");
+        assert_eq!(f.status.load(Ordering::SeqCst), after);
+        assert_eq!(f.writes.load(Ordering::SeqCst), writes);
+        let file = std::fs::read(f._dir.path().join(".incomplete/movie.mp4.part")).unwrap();
+        let start = 65536 - 333;
+        let end = start + 65536;
+        assert_eq!(&file[..start], &f.data[..start]);
+        assert!(file[start..end].iter().all(|byte| *byte == 0));
+        assert_eq!(&file[end..], &f.data[end..]);
+        assert_eq!(
+            std::fs::read(f._dir.path().join(".incomplete/fake.mp4.part")).unwrap(),
+            vec![b'x'; 131072]
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn failed_deletion_restores_a_running_torrent() {
+    let f = Fixture::new(false).await;
+    std::fs::remove_file(f._dir.path().join(".incomplete/movie.mp4.part")).unwrap();
+    let response = f
+        .request(
+            "POST",
+            &format!("/v1/discard/{HASH}/1"),
+            &[("x-drift-stream", "1")],
+        )
+        .await;
+    assert_eq!(response.status(), 409);
+    assert_eq!(f.status.load(Ordering::SeqCst), 4);
+    assert_eq!(f.writes.load(Ordering::SeqCst), 2);
 }

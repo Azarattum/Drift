@@ -25,6 +25,11 @@ It requires HTTPS or localhost; older browsers keep native playback. For HTTPS,
 reverse-proxy both RPC and the companion on consecutive ports. The companion itself
 still serves HTTP. Canvas playback does not offer AirPlay or picture-in-picture.
 
+With the Linux companion, **Delete downloaded data** can free space for a single
+file. The download filesystem must support sparse file hole
+punching and the companion needs write access to the file. Drift unchecks the file,
+keeps pieces shared with neighboring files, and resumes an active torrent after verification.
+
 ### Install
 
 Download the companion archive for your router from the
