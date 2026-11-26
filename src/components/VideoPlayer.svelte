@@ -1037,6 +1037,7 @@
         if (!media) return;
         const style = getComputedStyle(dialog);
         const maximum = parseFloat(style.maxHeight);
+        node.style.setProperty('--watch-full-width-height', `${(dialog.clientWidth * 9) / 16}px`);
         const player = node.closest('video-player')!;
         const other =
           player.getBoundingClientRect().top -
@@ -1117,7 +1118,7 @@
 <svelte:window onkeydown={keys} />
 {#snippet titleIcon()}
   {#if selected}
-    <span class="watch-mark" aria-hidden="true"><Film size={28} /></span>
+    <span class="watch-mark" aria-hidden="true"><Film size={34} /></span>
   {:else}
     <span class="watch-collection-icon" aria-hidden="true"><FolderOpen size={24} /></span>
   {/if}

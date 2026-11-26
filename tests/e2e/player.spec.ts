@@ -608,6 +608,13 @@ test('the desktop file browser stays beside the video and marks the current file
     return button.getBoundingClientRect().top - sibling.getBoundingClientRect().top;
   });
   expect(alignment).toBeCloseTo(0, 0);
+  const dialog = page.getByRole('dialog');
+  const size = () =>
+    dialog.evaluate((element) => ({
+      width: element.clientWidth,
+      height: element.clientHeight,
+    }));
+  const closedSize = await size();
   await files.click();
   const library = page.getByRole('region', { name: 'Video files' });
   await expect(library.getByRole('button', { name: /01 - The coast/ })).toHaveAttribute(
@@ -621,6 +628,10 @@ test('the desktop file browser stays beside the video and marks the current file
   });
   expect(separation.x).toBeGreaterThanOrEqual(-1);
   expect(separation.y).toBeCloseTo(0, 0);
+  await expect.poll(size).toEqual(closedSize);
+  await files.click();
+  await expect(library).toHaveCount(0);
+  await expect.poll(size).toEqual(closedSize);
   await next.click();
   await expect(page.locator('.watch-heading h2')).toHaveText('02 - Into the woods.mp4');
   await expect(next).toHaveCount(0);

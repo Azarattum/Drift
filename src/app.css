@@ -3707,11 +3707,11 @@ dialog.player-dialog {
 .watch-mark {
   display: grid;
   place-items: center;
-  width: 46px;
-  height: 46px;
+  width: 58px;
+  height: 58px;
   flex: 0 0 auto;
   border: 1px solid var(--border);
-  border-radius: 11px;
+  border-radius: 13px;
   color: var(--blue);
   background: var(--soft);
 }
@@ -4215,6 +4215,9 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
     position: relative;
     grid-template-columns: minmax(0, 1fr) clamp(245px, 30%, 320px);
   }
+  .watch-with-library .watch-canvas:not(.watch-fullscreen) video {
+    height: var(--watch-full-width-height, auto);
+  }
   .watch-with-library > .watch-library {
     position: absolute;
     inset: 0 0 0 auto;
@@ -4350,14 +4353,18 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   .watch-heading h2 {
     font-size: 15px;
   }
-  .watch-collection-icon,
-  .watch-mark {
+  .watch-collection-icon {
     width: 36px;
     height: 36px;
   }
+  .watch-mark {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+  }
   .watch-mark svg {
-    width: 24px;
-    height: 24px;
+    width: 26px;
+    height: 26px;
   }
   .watch-actions {
     order: 1;

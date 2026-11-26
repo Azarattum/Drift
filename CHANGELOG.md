@@ -5,6 +5,10 @@ Release tags and web/native package versions use the same semantic version.
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep the desktop player dialog from shrinking when opening the video file list.
+
 ### Added
 
 - Switch compatible Matroska audio tracks over HTTP and select embedded SubRip subtitles alongside sidecar captions while a torrent downloads.
