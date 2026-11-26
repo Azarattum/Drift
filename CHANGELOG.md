@@ -5,17 +5,23 @@ Release tags and web/native package versions use the same semantic version.
 
 ## [Unreleased]
 
-### Fixed
-
-- Keep the desktop player dialog from shrinking when opening the video file list.
+## [0.3.0] - 2026-11-26
 
 ### Added
 
+- Delete downloaded data for a single file from the inspector or player when using the updated Linux companion. The action unchecks the file, keeps pieces shared with neighboring files, and resumes active torrents after verification.
+- Show per-file download progress and provide download priority and selection actions in the video file list.
 - Switch compatible Matroska audio tracks over HTTP and select embedded SubRip subtitles alongside sidecar captions while a torrent downloads.
 
 ### Changed
 
-- Put the filename, download status, file controls, and close button in one player header with a larger film icon.
+- Use a single player header with the filename above the torrent name and download status.
+
+### Fixed
+
+- Keep the player size steady while browsing files, switching videos, or choosing whether to resume playback.
+- Keep playback controls and file menus reachable on narrow screens, including phones in landscape.
+- Dismiss the subtitle menu when clicking outside it and hide the idle cursor after fullscreen keyboard shortcuts.
 
 ## [0.2.0] - 2026-11-26
 
