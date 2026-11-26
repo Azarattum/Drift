@@ -6,6 +6,10 @@
     CheckCircle2,
     Captions,
     ChevronDown,
+    Circle,
+    CircleArrowDown,
+    Download,
+    MinusCircle,
     Film,
     FolderOpen,
     Languages,
@@ -18,12 +22,16 @@
     Play,
     RotateCcw,
     RotateCw,
+    Trash2,
     Volume2,
     VolumeX,
   } from '@lucide/svelte';
   import Modal from './Modal.svelte';
+  import DiscardFileDialog from './DiscardFileDialog.svelte';
+  import { canDiscardFileData } from '../lib/file-discard';
+  import PriorityControl from './PriorityControl.svelte';
   import { client } from '../lib/client.svelte';
-  import type { Torrent } from '../lib/types';
+  import type { FileStat, Torrent } from '../lib/types';
   import { bytes, percent } from '../lib/format';
   import {
     clock,
@@ -441,6 +449,115 @@
   }
   let resume = $state<number | null>(null);
   let pendingSeek: number | null = null;
+  let fileStats = $state<FileStat[]>([]);
+  let discardAvailable = $state(false);
+  let discardTarget = $state<VideoFile | null>(null);
+  $effect(() => {
+    const request = new AbortController();
+    void canDiscardFileData(
+      endpoint,
+      client.rpc.username,
+      client.rpc.password,
+      request.signal,
+    ).then((available) => {
+      if (!request.signal.aborted) discardAvailable = available;
+    });
+    return () => request.abort();
+  });
+  let fileMenu = $state<{ file: VideoFile; left: number; top: number } | null>(null);
+  let fileMenuElement = $state<HTMLDivElement>();
+  let fileMenuTrigger: HTMLElement | null = null;
+  let fileMenuScrollTop = 0;
+  let fileActionBusy = $state(false);
+  let fileMenuPress: { x: number; y: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  let longPressedFile: number | null = null;
+  function cancelFileMenuPress() {
+    clearTimeout(fileMenuPress?.timer);
+    fileMenuPress = null;
+  }
+  function startFileMenuPress(event: PointerEvent, file: VideoFile) {
+    cancelFileMenuPress();
+    longPressedFile = null;
+    if (event.pointerType !== 'touch' || !event.isPrimary) return;
+    const trigger = event.currentTarget as HTMLElement;
+    const { clientX: x, clientY: y } = event;
+    fileMenuPress = {
+      x,
+      y,
+      timer: setTimeout(() => {
+        fileMenuPress = null;
+        if (!trigger.isConnected) return;
+        longPressedFile = file.index;
+        void openVideoFileMenu(trigger, file, { x, y });
+      }, 500),
+    };
+  }
+  function closeVideoFileMenu(restoreFocus = true) {
+    fileMenu = null;
+    if (restoreFocus) fileMenuTrigger?.focus({ preventScroll: true });
+    fileMenuTrigger = null;
+  }
+  async function openVideoFileMenu(
+    trigger: HTMLElement,
+    file: VideoFile,
+    point?: { x: number; y: number },
+  ) {
+    const anchor = trigger.getBoundingClientRect();
+    const view = trigger.closest('dialog')!.getBoundingClientRect();
+    fileMenuTrigger = trigger;
+    fileMenuScrollTop = fileList?.scrollTop ?? 0;
+    fileMenu = { file, left: point?.x ?? anchor.left, top: point?.y ?? anchor.bottom };
+    await tick();
+    if (!fileMenuElement || fileMenu?.file.index !== file.index) return;
+    fileMenuElement.style.maxHeight = `${view.height - 16}px`;
+    const menu = fileMenuElement.getBoundingClientRect();
+    const left = Math.max(
+      view.left + 8,
+      Math.min(point?.x ?? anchor.left, view.right - menu.width - 8),
+    );
+    const below = (point?.y ?? anchor.bottom) + 5;
+    const above = (point?.y ?? anchor.top) - menu.height - 5;
+    const top = below + menu.height <= view.bottom - 8 ? below : Math.max(view.top + 8, above);
+    fileMenu = { file, left, top };
+    fileMenuElement.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus({
+      preventScroll: true,
+    });
+  }
+  async function updateVideoFile(
+    file: VideoFile,
+    change: { priority: number } | { wanted: boolean },
+  ) {
+    if (fileActionBusy || client.rpc.endpoint !== endpoint) return;
+    const previous = fileStats[file.index];
+    const property =
+      'wanted' in change
+        ? change.wanted
+          ? 'files-wanted'
+          : 'files-unwanted'
+        : change.priority === 1
+          ? 'priority-high'
+          : change.priority === -1
+            ? 'priority-low'
+            : 'priority-normal';
+    fileActionBusy = true;
+    try {
+      await client.rpc.call('torrent-set', { ids: [torrent.hashString], [property]: [file.index] });
+      if (disposed || client.rpc.endpoint !== endpoint) return;
+      fileStats[file.index] = {
+        bytesCompleted: file.bytesCompleted,
+        wanted: previous?.wanted ?? true,
+        priority: previous?.priority ?? 0,
+        ...change,
+      };
+      void client.poll(true);
+      if ('wanted' in change && fileMenu?.file.index === file.index) closeVideoFileMenu();
+    } catch (error) {
+      if (!disposed)
+        client.toast(error instanceof Error ? error.message : 'Could not update the file.');
+    } finally {
+      fileActionBusy = false;
+    }
+  }
   let listOpen = $state(false);
   let fileList = $state<HTMLUListElement>();
   let filesButton = $state<HTMLButtonElement>();
@@ -449,9 +566,10 @@
     const active = fileList.querySelector('[aria-current="true"]');
     if (!active) return;
     const row = active.getBoundingClientRect();
-    const list = fileList.getBoundingClientRect();
-    if (row.top < list.top) fileList.scrollTop += row.top - list.top;
-    else if (row.bottom > list.bottom) fileList.scrollTop += row.bottom - list.bottom;
+    const top = fileList.getBoundingClientRect().top + fileList.clientTop;
+    const bottom = top + fileList.clientHeight;
+    if (row.top < top) fileList.scrollTop += Math.floor(row.top - top);
+    else if (row.bottom > bottom) fileList.scrollTop += Math.ceil(row.bottom - bottom);
   });
   let rate = $state(1);
   let recoverySubtitle: number | undefined;
@@ -705,7 +823,7 @@
         if (!document.hidden) {
           const response = await client.rpc.call<{ torrents: Torrent[] }>(
             'torrent-get',
-            { ids: [torrent.hashString], fields: ['hashString', 'files'] },
+            { ids: [torrent.hashString], fields: ['hashString', 'files', 'fileStats'] },
             signal,
           );
           const updated = response.torrents.find((t) => t.hashString === torrent.hashString);
@@ -719,6 +837,7 @@
           }
           if (updated && !signal.aborted && !disposed) {
             files = videoFiles(updated.files);
+            if (!fileActionBusy && updated.fileStats) fileStats = updated.fileStats;
             selected = files.find((f) => f.index === file.index) ?? selected;
           }
         }
@@ -729,6 +848,34 @@
     }, 3000);
   }
   let complete = $derived(!!selected && downloaded >= selected.length);
+  $effect(() => {
+    if (phase !== 'choose' && (!listOpen || !complete)) return;
+    const request = new AbortController();
+    let refreshing = false;
+    const timer = setInterval(async () => {
+      if (refreshing || document.hidden || client.rpc.endpoint !== endpoint) return;
+      refreshing = true;
+      try {
+        const { torrents } = await client.rpc.call<{ torrents: Torrent[] }>(
+          'torrent-get',
+          { ids: [torrent.hashString], fields: ['hashString', 'files', 'fileStats'] },
+          request.signal,
+        );
+        const updated = torrents.find((item) => item.hashString === torrent.hashString);
+        if (request.signal.aborted || !updated) return;
+        files = videoFiles(updated.files);
+        if (!fileActionBusy && updated.fileStats) fileStats = updated.fileStats;
+      } catch {
+        // Keep the last known list while the connection is unavailable.
+      } finally {
+        refreshing = false;
+      }
+    }, 3000);
+    return () => {
+      clearInterval(timer);
+      request.abort();
+    };
+  });
   let fileNumber = $derived(selected ? files.findIndex((f) => f.index === selected!.index) + 1 : 0);
   function save(force = false) {
     if (!video || !selected || !hasPlayed || resume !== null || !Number.isFinite(video.duration))
@@ -802,6 +949,7 @@
     waiting = false;
     rate = recovery ? previousRate : 1;
     listOpen = false;
+    closeVideoFileMenu(false);
     captionMenu = false;
     captionIndex = -1;
     try {
@@ -1028,17 +1176,24 @@
   function fitPlayer(node: HTMLElement) {
     const dialog = node.closest('dialog')!;
     const body = dialog.querySelector<HTMLElement>('.modal-body')!;
+    const content = node.closest<HTMLElement>('.watch-content')!;
+    const controls = node.querySelector<HTMLElement>('.watch-controls');
     let frame = 0;
     function update() {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         if (node.classList.contains('watch-fullscreen')) return;
-        const media = node.querySelector('video');
+        const media = node.querySelector('video, .watch-preparing-frame');
         if (!media) return;
         const style = getComputedStyle(dialog);
         const maximum = parseFloat(style.maxHeight);
+        if (controls)
+          content.style.setProperty(
+            '--watch-measured-controls-space',
+            `${controls.offsetHeight}px`,
+          );
         node.style.setProperty('--watch-full-width-height', `${(dialog.clientWidth * 9) / 16}px`);
-        const player = node.closest('video-player')!;
+        const player = node.closest('.drift-player')!;
         const other =
           player.getBoundingClientRect().top -
           body.getBoundingClientRect().top +
@@ -1054,6 +1209,7 @@
     }
     const observer = new ResizeObserver(update);
     observer.observe(body);
+    if (controls) observer.observe(controls);
     window.addEventListener('resize', update);
     window.visualViewport?.addEventListener('resize', update);
     update();
@@ -1072,13 +1228,14 @@
       try {
         const r = await client.rpc.call<{ torrents: Torrent[] }>(
           'torrent-get',
-          { ids: [torrent.hashString], fields: ['id', 'hashString', 'name', 'files'] },
+          { ids: [torrent.hashString], fields: ['id', 'hashString', 'name', 'files', 'fileStats'] },
           signal,
         );
         if (disposed || signal.aborted) return;
         const found = r.torrents.find((t) => t.hashString === torrent.hashString);
         if (!found) throw new Error('This torrent is no longer available.');
         files = videoFiles(found.files);
+        fileStats = found.fileStats ?? [];
         if (!files.length) {
           phase = 'error';
           message = 'There are no supported video files in this torrent.';
@@ -1107,6 +1264,7 @@
     document.addEventListener('visibilitychange', visibility);
     return () => {
       disposed = true;
+      cancelFileMenuPress();
       stop();
       controller.abort();
       window.removeEventListener('pagehide', persist);
@@ -1115,25 +1273,39 @@
   });
 </script>
 
-<svelte:window onkeydown={keys} />
+<svelte:window
+  onkeydown={keys}
+  onresize={() => closeVideoFileMenu(false)}
+  onclick={(event) => {
+    if (fileMenu && event.target instanceof Element && !event.target.closest('.watch-file-menu'))
+      closeVideoFileMenu(false);
+    if (
+      captionMenu &&
+      event.target instanceof Element &&
+      !event.target.closest('.watch-caption-picker')
+    )
+      captionMenu = false;
+  }}
+/>
 {#snippet titleIcon()}
   {#if selected}
-    <span class="watch-mark" aria-hidden="true"><Film size={34} /></span>
+    <span class="watch-mark" aria-hidden="true"><Film size={30} /></span>
   {:else}
     <span class="watch-collection-icon" aria-hidden="true"><FolderOpen size={24} /></span>
   {/if}
 {/snippet}
 {#snippet titleDetails()}
   {#if selected}
-    <p>{torrent.name}</p>
     <div class="watch-meta">
+      <p title={torrent.name}>{torrent.name}</p>
       <span class="watch-download" class:complete>
         {#if complete}<CheckCircle2 size={14} />Downloaded
         {:else}<span class="watch-live-dot"></span>{percent(
             selected.length ? downloaded / selected.length : 0,
           )} downloaded{/if}
       </span>
-      {#if audioNotice}<span>{audioNotice}</span>{/if}
+      {#if audioNotice}<span class="watch-audio-notice" title={audioNotice}>{audioNotice}</span
+        >{/if}
     </div>
   {/if}
 {/snippet}
@@ -1166,16 +1338,15 @@
   close={leave}
   player={selected ? 'playback' : 'chooser'}
 >
-  <div class="watch-content" class:watch-with-library={phase === 'ready' && listOpen}>
-    {#if phase === 'loading' || phase === 'preparing'}
+  <div
+    class="watch-content"
+    class:watch-with-library={(phase === 'ready' || phase === 'preparing') && listOpen}
+  >
+    {#if phase === 'loading'}
       <div class="watch-placeholder" role="status">
         <LoaderCircle class="watch-spinner" size={30} />
-        <h3>{phase === 'loading' ? 'Finding your videos' : 'Preparing your video'}</h3>
-        <p>
-          {phase === 'loading'
-            ? 'Getting the file list…'
-            : 'Enabling sequential download and connecting to your device…'}
-        </p>
+        <h3>Finding your videos</h3>
+        <p>Getting the file list…</p>
       </div>
     {:else if phase === 'error'}
       <div class="watch-placeholder watch-error" role="alert">
@@ -1193,6 +1364,14 @@
                 phase = 'choose';
               }}><ListVideo size={16} />Choose another file</button
             >{/if}
+        </div>
+      </div>
+    {:else if phase === 'preparing'}
+      <div class="drift-player watch-canvas watch-preparing" use:fitPlayer>
+        <div class="watch-preparing-frame"></div>
+        <div class="watch-overlay" role="status">
+          <LoaderCircle class="watch-spinner" size={30} />
+          <h3>Preparing your video</h3>
         </div>
       </div>
     {:else if phase === 'ready'}
@@ -1320,7 +1499,7 @@
             </div>{/if}
           <media-controls
             class="watch-controls"
-            inert={enhancing}
+            inert={enhancing || resume !== null}
             class:watch-controls-blocked={resume !== null}
             visibility={fullscreen && !captionMenu ? 'auto' : 'always'}
           >
@@ -1332,141 +1511,149 @@
                 ><media-slider-thumb></media-slider-thumb></media-time-slider
               >
               <media-controls-group class="watch-control-row" aria-label="Playback controls">
-                <media-play-button class="watch-control" aria-label={paused ? 'Play' : 'Pause'}
-                  ><span class="when-paused"><Play size={20} fill="currentColor" /></span><span
-                    class="when-playing"><Pause size={20} fill="currentColor" /></span
-                  ></media-play-button
-                >
-                <media-seek-button
-                  class="watch-control watch-skip"
-                  seconds={-10}
-                  aria-label="Back 10 seconds"
-                  ><RotateCcw size={19} /><small>10</small></media-seek-button
-                >
-                <media-seek-button
-                  class="watch-control watch-skip"
-                  seconds={10}
-                  aria-label="Forward 10 seconds"
-                  ><RotateCw size={19} /><small>10</small></media-seek-button
-                >
-                <span class="watch-time"
-                  ><media-time type="current"></media-time><span>/</span><media-time type="duration"
-                  ></media-time></span
-                >
-                <span class="watch-control-spacer"></span>
-                <media-mute-button class="watch-control" aria-label={muted ? 'Unmute' : 'Mute'}
-                  ><span class="when-unmuted"><Volume2 size={20} /></span><span class="when-muted"
-                    ><VolumeX size={20} /></span
-                  ></media-mute-button
-                >
-                <media-volume-slider class="watch-volume" aria-label="Volume"
-                  ><media-slider-track><media-slider-fill></media-slider-fill></media-slider-track
-                  ><media-slider-thumb></media-slider-thumb></media-volume-slider
-                >
-                <label class="watch-rate"
-                  ><span class="sr-only">Playback speed</span><select
-                    aria-label="Playback speed"
-                    bind:value={rate}
-                    onchange={() => {
-                      if (video) video.playbackRate = rate;
-                    }}
-                    >{#each [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as r}<option value={r}>{r}×</option
-                      >{/each}</select
-                  ><ChevronDown size={12} /></label
-                >
-                {#if audioOptions.length > 1 && !enhancing}
-                  <label class="watch-audio">
-                    <Languages size={19} />
-                    <span>Audio</span><ChevronDown size={12} />
-                    <select
-                      aria-label="Audio track"
-                      value={audioIndex}
-                      disabled={audioSwitching}
-                      onchange={(event) => {
-                        const select = event.currentTarget;
-                        const index = Number(select.value);
-                        select.value = String(audioIndex);
-                        void setAudio(index);
+                <div class="watch-transport">
+                  <media-play-button class="watch-control" aria-label={paused ? 'Play' : 'Pause'}
+                    ><span class="when-paused"><Play size={20} fill="currentColor" /></span><span
+                      class="when-playing"><Pause size={20} fill="currentColor" /></span
+                    ></media-play-button
+                  >
+                  <media-seek-button
+                    class="watch-control watch-skip"
+                    seconds={-10}
+                    aria-label="Back 10 seconds"
+                    ><RotateCcw size={19} /><small>10</small></media-seek-button
+                  >
+                  <media-seek-button
+                    class="watch-control watch-skip"
+                    seconds={10}
+                    aria-label="Forward 10 seconds"
+                    ><RotateCw size={19} /><small>10</small></media-seek-button
+                  >
+                  <span class="watch-time"
+                    ><media-time type="current"></media-time><span>/</span><media-time
+                      type="duration"
+                    ></media-time></span
+                  >
+                </div>
+                <div class="watch-control-options">
+                  <media-mute-button class="watch-control" aria-label={muted ? 'Unmute' : 'Mute'}
+                    ><span class="when-unmuted"><Volume2 size={20} /></span><span class="when-muted"
+                      ><VolumeX size={20} /></span
+                    ></media-mute-button
+                  >
+                  <media-volume-slider class="watch-volume" aria-label="Volume"
+                    ><media-slider-track><media-slider-fill></media-slider-fill></media-slider-track
+                    ><media-slider-thumb></media-slider-thumb></media-volume-slider
+                  >
+                  <label class="watch-rate"
+                    ><span class="sr-only">Playback speed</span><select
+                      aria-label="Playback speed"
+                      bind:value={rate}
+                      onchange={() => {
+                        if (video) video.playbackRate = rate;
                       }}
-                    >
-                      {#if audioIndex < 0}<option value={-1} disabled>Choose a track</option>{/if}
-                      {#each audioOptions as label, i}
-                        <option value={i}>{label}</option>
-                      {/each}
-                    </select>
-                  </label>
-                {/if}
-                {#if captions.length}<div class="watch-caption-picker">
-                    <button
-                      class="watch-control"
-                      aria-label="Subtitles"
-                      aria-busy={subtitleLoading !== null}
-                      aria-expanded={captionMenu}
-                      aria-haspopup="menu"
-                      onclick={toggleCaptions}><Captions size={20} /></button
-                    >{#if captionMenu}<div
-                        class="watch-caption-menu"
-                        role="menu"
-                        aria-label="Subtitles"
-                        tabindex="-1"
-                        onkeydown={(e) => {
-                          if (e.key === 'Escape') {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            captionMenu = false;
-                            canvas?.querySelector<HTMLElement>('[aria-label="Subtitles"]')?.focus();
-                          }
-                          if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            const buttons = Array.from(
-                              e.currentTarget.querySelectorAll<HTMLButtonElement>('button'),
-                            );
-                            const index = buttons.indexOf(
-                              document.activeElement as HTMLButtonElement,
-                            );
-                            buttons[
-                              e.key === 'Home'
-                                ? 0
-                                : e.key === 'End'
-                                  ? buttons.length - 1
-                                  : (index + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) %
-                                    buttons.length
-                            ]?.focus();
-                          }
+                      >{#each [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as r}<option value={r}>{r}×</option
+                        >{/each}</select
+                    ><ChevronDown size={12} /></label
+                  >
+                  {#if audioOptions.length > 1 && !enhancing}
+                    <label class="watch-audio">
+                      <Languages size={19} />
+                      <span>Audio</span><ChevronDown size={12} />
+                      <select
+                        aria-label="Audio track"
+                        value={audioIndex}
+                        disabled={audioSwitching}
+                        onchange={(event) => {
+                          const select = event.currentTarget;
+                          const index = Number(select.value);
+                          select.value = String(audioIndex);
+                          void setAudio(index);
                         }}
                       >
-                        <button
-                          role="menuitemradio"
-                          aria-checked={captionIndex === -1}
-                          onclick={() => setCaption(-1)}
-                          >Off{#if captionIndex === -1}<Check size={14} />{/if}</button
-                        >{#each captions as track, i}<button
+                        {#if audioIndex < 0}<option value={-1} disabled>Choose a track</option>{/if}
+                        {#each audioOptions as label, i}
+                          <option value={i}>{label}</option>
+                        {/each}
+                      </select>
+                    </label>
+                  {/if}
+                  {#if captions.length}<div class="watch-caption-picker">
+                      <button
+                        class="watch-control"
+                        aria-label="Subtitles"
+                        aria-busy={subtitleLoading !== null}
+                        aria-expanded={captionMenu}
+                        aria-haspopup="menu"
+                        onclick={toggleCaptions}><Captions size={20} /></button
+                      >{#if captionMenu}<div
+                          class="watch-caption-menu"
+                          role="menu"
+                          aria-label="Subtitles"
+                          tabindex="-1"
+                          onkeydown={(e) => {
+                            if (e.key === 'Escape') {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              captionMenu = false;
+                              canvas
+                                ?.querySelector<HTMLElement>('[aria-label="Subtitles"]')
+                                ?.focus();
+                            }
+                            if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const buttons = Array.from(
+                                e.currentTarget.querySelectorAll<HTMLButtonElement>('button'),
+                              );
+                              const index = buttons.indexOf(
+                                document.activeElement as HTMLButtonElement,
+                              );
+                              buttons[
+                                e.key === 'Home'
+                                  ? 0
+                                  : e.key === 'End'
+                                    ? buttons.length - 1
+                                    : (index + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) %
+                                      buttons.length
+                              ]?.focus();
+                            }
+                          }}
+                        >
+                          <button
                             role="menuitemradio"
-                            aria-checked={captionIndex === i}
-                            onclick={() => setCaption(i)}
-                            >{track.label ||
-                              track.language ||
-                              `Track ${i + 1}`}{#if captionIndex === i}<Check
-                                size={14}
-                              />{/if}</button
-                          >{/each}
-                      </div>{/if}
-                  </div>{/if}
-                {#if !enhanced}<media-airplay-button
-                    class="watch-control watch-airplay"
-                    aria-label="AirPlay"><Airplay size={20} /></media-airplay-button
+                            aria-checked={captionIndex === -1}
+                            onclick={() => setCaption(-1)}
+                            >Off{#if captionIndex === -1}<Check size={14} />{/if}</button
+                          >{#each captions as track, i}<button
+                              role="menuitemradio"
+                              aria-checked={captionIndex === i}
+                              onclick={() => setCaption(i)}
+                              >{track.label ||
+                                track.language ||
+                                `Track ${i + 1}`}{#if captionIndex === i}<Check
+                                  size={14}
+                                />{/if}</button
+                            >{/each}
+                        </div>{/if}
+                    </div>{/if}
+                  {#if !enhanced}<media-airplay-button
+                      class="watch-control watch-airplay"
+                      aria-label="AirPlay"><Airplay size={20} /></media-airplay-button
+                    >
+                    <media-pip-button
+                      class="watch-control watch-pip"
+                      aria-label="Picture in picture"
+                      ><PictureInPicture2 size={20} /></media-pip-button
+                    >{/if}
+                  <media-fullscreen-button
+                    class="watch-control watch-fullscreen"
+                    aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+                    ><span class="when-windowed"><Maximize size={20} /></span><span
+                      class="when-fullscreen"><Minimize size={20} /></span
+                    ></media-fullscreen-button
                   >
-                  <media-pip-button class="watch-control watch-pip" aria-label="Picture in picture"
-                    ><PictureInPicture2 size={20} /></media-pip-button
-                  >{/if}
-                <media-fullscreen-button
-                  class="watch-control watch-fullscreen"
-                  aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-                  ><span class="when-windowed"><Maximize size={20} /></span><span
-                    class="when-fullscreen"><Minimize size={20} /></span
-                  ></media-fullscreen-button
-                >
+                </div>
               </media-controls-group>
             </media-controls-content>
           </media-controls>
@@ -1483,7 +1670,15 @@
           <h3>{phase === 'choose' ? 'Choose a video' : 'Video files'}</h3>
           <span>{files.length} files</span>
         </header>
-        <ul class="watch-file-list" role="list" bind:this={fileList}>
+        <ul
+          class="watch-file-list"
+          role="list"
+          bind:this={fileList}
+          onscroll={() => {
+            cancelFileMenuPress();
+            if (fileMenu && fileList?.scrollTop !== fileMenuScrollTop) closeVideoFileMenu(false);
+          }}
+        >
           {#each files as file (file.index)}
             {@const position = playbackPosition(positionKey(endpoint, torrent.hashString, file))}
             {@const active = selected?.index === file.index}
@@ -1492,21 +1687,66 @@
                 class="watch-file"
                 class:active
                 aria-current={active ? 'true' : undefined}
-                onclick={() => {
-                  if (active) {
-                    listOpen = false;
-                    filesButton?.focus();
-                  } else void watch(file);
+                aria-haspopup="dialog"
+                aria-expanded={fileMenu?.file.index === file.index}
+                aria-keyshortcuts="Shift+F10"
+                oncontextmenu={(event) => {
+                  event.preventDefault();
+                  if (fileMenuPress) longPressedFile = file.index;
+                  cancelFileMenuPress();
+                  void openVideoFileMenu(event.currentTarget, file, {
+                    x: event.clientX,
+                    y: event.clientY,
+                  });
+                }}
+                onkeydown={(event) => {
+                  if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10'))
+                    return;
+                  event.preventDefault();
+                  void openVideoFileMenu(event.currentTarget, file);
+                }}
+                onpointerdown={(event) => startFileMenuPress(event, file)}
+                onpointermove={(event) => {
+                  if (
+                    fileMenuPress &&
+                    Math.hypot(event.clientX - fileMenuPress.x, event.clientY - fileMenuPress.y) > 8
+                  )
+                    cancelFileMenuPress();
+                }}
+                onpointerup={cancelFileMenuPress}
+                onpointercancel={cancelFileMenuPress}
+                onclick={(event) => {
+                  if (longPressedFile === file.index && event.detail > 0) {
+                    longPressedFile = null;
+                    event.stopPropagation();
+                    return;
+                  }
+                  if (listOpen) filesButton?.focus({ preventScroll: true });
+                  if (active) listOpen = false;
+                  else void watch(file);
                 }}
               >
                 <span class="watch-file-icon" aria-hidden="true"><Film size={16} /></span>
                 <span class="watch-file-name">
                   <b>{file.name.split('/').at(-1)}</b>
-                  <small>
-                    {position ? `Continue from ${clock(position.time)} · ` : ''}{bytes(file.length)} ·
-                    {file.bytesCompleted >= file.length
-                      ? 'Downloaded'
-                      : `${percent(file.bytesCompleted / file.length)} downloaded`}
+                  <small class="watch-file-meta">
+                    {#if position}<span>Continue from {clock(position.time)} ·</span>{/if}
+                    <span>{bytes(file.length)} ·</span>
+                    <span
+                      class="watch-file-progress"
+                      class:complete={file.bytesCompleted >= file.length}
+                      class:partial={file.bytesCompleted > 0 && file.bytesCompleted < file.length}
+                    >
+                      {#if file.bytesCompleted >= file.length}
+                        <CheckCircle2 aria-hidden="true" size={13} />Downloaded
+                      {:else if file.bytesCompleted > 0}
+                        <CircleArrowDown aria-hidden="true" size={13} />{percent(
+                          file.bytesCompleted / file.length,
+                        )} downloaded
+                      {:else}
+                        <Circle aria-hidden="true" size={13} />Not downloaded
+                      {/if}
+                    </span>
                   </small>
                 </span>
                 <span class="watch-file-action" aria-hidden="true">
@@ -1519,4 +1759,72 @@
       </section>
     {/if}
   </div>
+  {#if fileMenu}
+    {@const file = fileMenu.file}
+    {@const wanted = fileStats[file.index]?.wanted ?? true}
+    <div
+      class="context-menu file-context-menu watch-file-menu"
+      role="dialog"
+      aria-label="Video file actions"
+      tabindex="-1"
+      style:left={`${fileMenu.left}px`}
+      style:top={`${fileMenu.top}px`}
+      bind:this={fileMenuElement}
+      onkeydown={(event) => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopPropagation();
+        closeVideoFileMenu();
+      }}
+    >
+      <div class="menu-caption">File priority</div>
+      <PriorityControl
+        value={fileStats[file.index]?.priority ?? 0}
+        disabled={fileActionBusy}
+        onchange={(priority) => void updateVideoFile(file, { priority })}
+      />
+      <button disabled={fileActionBusy} onclick={() => updateVideoFile(file, { wanted: !wanted })}>
+        {#if wanted}<MinusCircle size={16} />Skip download{:else}<Download size={16} />Include in
+          download{/if}
+      </button>
+      {#if discardAvailable && file.bytesCompleted > 0}
+        <button
+          class="danger"
+          disabled={fileActionBusy}
+          onclick={() => {
+            const target = file;
+            closeVideoFileMenu();
+            discardTarget = target;
+          }}><Trash2 size={16} />Delete downloaded data…</button
+        >
+      {/if}
+    </div>
+  {/if}
 </Modal>
+
+{#if discardTarget}
+  <DiscardFileDialog
+    name={discardTarget.name}
+    hash={torrent.hashString}
+    index={discardTarget.index}
+    close={() => (discardTarget = null)}
+    closePlayback={async () => {
+      if (!selected) return;
+      stop();
+      controller.abort();
+      selected = null;
+      phase = 'choose';
+      await Promise.all([tick(), formatCleanup]);
+    }}
+    deleted={() => {
+      const file = discardTarget!;
+      fileStats[file.index] = {
+        priority: fileStats[file.index]?.priority ?? 0,
+        bytesCompleted: file.bytesCompleted,
+        wanted: false,
+      };
+      discardTarget = null;
+      client.toast('Downloaded data deleted.');
+    }}
+  />
+{/if}

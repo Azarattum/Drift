@@ -84,7 +84,7 @@
         <div class="watch-heading">
           {@render titleIcon?.()}
           <div class="watch-title">
-            <h2 id={titleId}>{title}</h2>
+            <h2 id={titleId} {title}>{title}</h2>
             {@render titleDetails?.()}
           </div>
         </div>

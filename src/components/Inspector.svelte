@@ -28,6 +28,7 @@
     CheckCircle2,
     X,
     Zap,
+    Trash2,
   } from '@lucide/svelte';
   import { fly } from 'svelte/transition';
   import { client } from '../lib/client.svelte';
@@ -39,6 +40,8 @@
   import type { Torrent } from '../lib/types';
   import PeerGraph from './PeerGraph.svelte';
   import PriorityControl from './PriorityControl.svelte';
+  import DiscardFileDialog from './DiscardFileDialog.svelte';
+  import { canDiscardFileData } from '../lib/file-discard';
   import Modal from './Modal.svelte';
   let {
     torrent: t,
@@ -138,6 +141,21 @@
     if (tab && peerView && scrollPane) scrollPane.scrollTop = 0;
   });
   let rename = $state<FileNode | null>(null);
+  let discardAvailable = $state(false);
+  let discardTarget = $state<{ name: string; hash: string; index: number } | null>(null);
+  $effect(() => {
+    const request = new AbortController();
+    discardAvailable = false;
+    void canDiscardFileData(
+      client.rpc.endpoint,
+      client.rpc.username,
+      client.rpc.password,
+      request.signal,
+    ).then((available) => {
+      if (!request.signal.aborted) discardAvailable = available;
+    });
+    return () => request.abort();
+  });
   let fileContext = $state<{ node: FileNode; x: number; y: number } | null>(null);
   let fileMenuTrigger: HTMLElement | null = null;
   function openFileMenu(e: MouseEvent | KeyboardEvent, n: FileNode) {
@@ -1080,6 +1098,17 @@
         fileOptions(node);
       }}><Pencil size={15} />Rename…</button
     >
+    {#if discardAvailable && !fileContext.node.children.length && fileContext.node.completed > 0}
+      <button
+        role="menuitem"
+        class="danger"
+        onclick={() => {
+          const node = fileContext!.node;
+          closeFileMenu();
+          discardTarget = { name: node.name, hash: t.hashString, index: node.ids[0] };
+        }}><Trash2 size={16} />Delete downloaded data…</button
+      >
+    {/if}
   </div>{/if}
 {#if rename}<Modal
     title={rename.children.length ? 'Folder options' : 'File options'}
@@ -1161,3 +1190,14 @@
       ><button class="button primary">Save labels</button>
     </form></Modal
   >{/if}
+
+{#if discardTarget}
+  <DiscardFileDialog
+    {...discardTarget}
+    close={() => (discardTarget = null)}
+    deleted={() => {
+      discardTarget = null;
+      client.toast('Downloaded data deleted.');
+    }}
+  />
+{/if}

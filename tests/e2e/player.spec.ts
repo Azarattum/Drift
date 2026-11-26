@@ -101,6 +101,8 @@ async function setup(
     dts?: boolean;
     multipleAudio?: boolean;
     embedded?: boolean;
+    discard?: boolean;
+    status?: number;
   } = {},
 ) {
   const matroska = options.dts || options.multipleAudio || options.embedded;
@@ -116,7 +118,7 @@ async function setup(
   const t = torrent({
     name: 'Northern Light',
     percentDone: 1,
-    status: 0,
+    status: options.status ?? 0,
     files: [
       {
         name: `Northern Light/01 - The coast.${matroska ? 'mkv' : 'mp4'}`,
@@ -140,8 +142,22 @@ async function setup(
   const mediaGate = new Promise<void>((resolve) => {
     releaseMedia = resolve;
   });
-  const rpcCalls: { method: string; arguments: { fields?: string[] } }[] = [];
+  const rpcCalls: {
+    method: string;
+    arguments: { fields?: string[]; 'priority-high'?: number[]; 'files-unwanted'?: number[] };
+  }[] = [];
   const calls: { url: string; method: string; headers: Record<string, string> }[] = [];
+  function skipFiles(indices: number[]) {
+    t.fileStats ??= [];
+    const stats = t.fileStats;
+    for (const index of indices) {
+      stats[index] = {
+        bytesCompleted: t.files![index].bytesCompleted,
+        priority: stats[index]?.priority ?? 0,
+        wanted: false,
+      };
+    }
+  }
   await page.route('**/full-speed.json*', (route) => route.fulfill({ status: 404 }));
   await page.route(/\/rpc$/, async (route) => {
     const body = route.request().postDataJSON();
@@ -149,6 +165,8 @@ async function setup(
     let args = {};
     if (body.method === 'session-get') args = { 'rpc-version': 18, version: '4.1.3' };
     if (body.method === 'torrent-get') args = { torrents: [t] };
+    if (body.method === 'torrent-set' && body.arguments['files-unwanted'])
+      skipFiles(body.arguments['files-unwanted']);
     if (body.method === 'session-stats') args = { downloadSpeed: 0, uploadSpeed: 0 };
     await route.fulfill({ json: { result: 'success', arguments: args } });
   });
@@ -168,6 +186,12 @@ async function setup(
       'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges',
     };
     if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+    if (path === '/v1/status')
+      return route.fulfill({ json: { discardFileData: options.discard === true }, headers });
+    if (path.includes('/discard/')) {
+      skipFiles([Number(path.split('/').at(-1))]);
+      return route.fulfill({ json: { verificationQueued: true }, headers });
+    }
     if (path.includes('/play/'))
       return route.fulfill({
         json: {
@@ -329,17 +353,21 @@ test('real playback, Video.js controls, resume, keyboard and close cleanup', asy
     const overlay = canvas.querySelector('.watch-resume')!.getBoundingClientRect();
     return {
       uncovered: bounds.bottom - overlay.bottom,
-      controls: getComputedStyle(canvas.querySelector('.watch-controls')!).display,
+      height: canvas.clientHeight,
+      controls: getComputedStyle(canvas.querySelector('.watch-controls')!).visibility,
     };
   });
   expect(resumeGeometry.uncovered).toBeCloseTo(0, 0);
-  expect(resumeGeometry.controls).toBe('none');
+  expect(resumeGeometry.controls).toBe('hidden');
   await page.getByRole('button', { name: 'Resume from 0:25' }).click();
   await expect(page.getByRole('heading', { name: 'Pick up where you left off' })).toHaveCount(0);
   releaseMedia();
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
     .toBeGreaterThan(24);
+  await expect
+    .poll(() => page.locator('.watch-canvas').evaluate((canvas) => canvas.clientHeight))
+    .toBe(resumeGeometry.height);
   await page.locator('.watch-heading h2').click();
   await page.keyboard.press('k');
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
@@ -383,7 +411,12 @@ test('matching subtitle files are discovered and rendered as native text tracks'
   page,
 }) => {
   const { calls } = await setup(page, { subtitles: true });
-  await page.getByRole('button', { name: 'Subtitles', exact: true }).click();
+  const subtitles = page.getByRole('button', { name: 'Subtitles', exact: true });
+  await subtitles.click();
+  await expect(page.getByRole('menu', { name: 'Subtitles' })).toBeVisible();
+  await page.locator('.watch-heading h2').click();
+  await expect(subtitles).toHaveAttribute('aria-expanded', 'false');
+  await subtitles.click();
   await page.getByRole('menuitemradio', { name: 'English', exact: true }).click();
   await expect
     .poll(() =>
@@ -473,7 +506,7 @@ test('fullscreen fills the video area and overlays controls that hide and wake o
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState))
     .toBeGreaterThanOrEqual(2);
-  await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).click();
+  await page.keyboard.press('f');
   const canvas = page.locator('.watch-canvas');
   const controls = page.locator('.watch-controls');
   await expect(canvas).toHaveClass(/watch-fullscreen/);
@@ -496,9 +529,12 @@ test('fullscreen fills the video area and overlays controls that hide and wake o
   expect(geometry.controlsTop).toBeLessThan(geometry.videoBottom);
   expect(geometry.controlsBottom).toBeCloseTo(geometry.videoBottom, 0);
   await page.mouse.move(120, 100);
+  await page.keyboard.press('m');
   await expect(controls).toHaveCSS('opacity', '0', { timeout: 5000 });
+  await expect(video).toHaveCSS('cursor', 'none');
   await page.mouse.move(180, 100);
   await expect(controls).toHaveCSS('opacity', '1');
+  await expect(video).not.toHaveCSS('cursor', 'none');
   await video.click({ position: { x: 90, y: 70 } });
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
   await page.waitForTimeout(2300);
@@ -509,6 +545,7 @@ test('fullscreen fills the video area and overlays controls that hide and wake o
   await page.keyboard.press('Tab');
   await page.waitForTimeout(2300);
   await expect(controls).toHaveCSS('opacity', '1');
+  await expect(video).toHaveCSS('cursor', 'none');
   await page.getByRole('button', { name: 'Exit fullscreen', exact: true }).click();
   await expect(canvas).not.toHaveClass(/watch-fullscreen/);
 });
@@ -593,12 +630,70 @@ test('chooses a native audio track without restarting playback', async ({ page }
   ).toHaveLength(1);
 });
 
+test('video file actions update the chosen file and show progress', async ({ page }) => {
+  const { rpcCalls } = await setup(page, { videoCount: 2, partial: true });
+  const library = page.getByRole('region', { name: 'Video files' });
+  await expect(library.getByText('80% downloaded')).toBeVisible();
+  await expect(library.getByText('Downloaded', { exact: true })).toBeVisible();
+  const metaOffset = await library.getByText('80% downloaded').evaluate((status) => {
+    const size = status.previousElementSibling!;
+    return Math.abs(status.getBoundingClientRect().top - size.getBoundingClientRect().top);
+  });
+  expect(metaOffset).toBeLessThan(1);
+  const file = library.getByRole('button', { name: /^02 - Into the woods/ });
+  await file.press('Shift+F10');
+  const menu = page.getByRole('dialog', { name: 'Video file actions' });
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(file).toBeFocused();
+  await file.dispatchEvent('pointerdown', { pointerType: 'touch', isPrimary: true });
+  await expect(menu).toBeVisible();
+  await file.dispatchEvent('pointerup', { pointerType: 'touch', isPrimary: true });
+  await file.dispatchEvent('click', { detail: 1 });
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('Escape');
+  await file.click({ button: 'right' });
+  await menu.getByRole('button', { name: 'High' }).click();
+  await expect(menu.getByRole('button', { name: 'High' })).toHaveAttribute('aria-pressed', 'true');
+  await menu.getByRole('button', { name: 'Skip download' }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(library.getByText('· Skipped')).toHaveCount(0);
+  await file.click({ button: 'right' });
+  await expect(menu.getByRole('button', { name: 'Include in download' })).toBeVisible();
+  expect(rpcCalls.some((call) => call.arguments['priority-high']?.join() === '1')).toBe(true);
+  expect(rpcCalls.some((call) => call.arguments['files-unwanted']?.join() === '1')).toBe(true);
+});
+
+test('deleting file data from an active torrent requires only confirmation', async ({ page }) => {
+  const { calls } = await setup(page, { videoCount: 2, discard: true, status: 4 });
+  const file = page.getByRole('button', { name: /^02 - Into the woods/ });
+  const requests = () =>
+    calls.filter((call) => call.method === 'POST' && call.url.includes('/discard/'));
+  await file.click({ button: 'right' });
+  const action = page.getByRole('button', { name: 'Delete downloaded data…' });
+  await action.click();
+  const confirmation = page.getByRole('dialog', { name: 'Delete downloaded data?' });
+  await expect(confirmation).toContainText('02 - Into the woods.mp4');
+  expect(requests()).toHaveLength(0);
+  await confirmation.getByRole('button', { name: 'Cancel' }).click();
+  await expect(confirmation).toHaveCount(0);
+  expect(requests()).toHaveLength(0);
+  await file.click({ button: 'right' });
+  await action.click();
+  await confirmation.getByRole('button', { name: 'Delete data', exact: true }).click();
+  await expect(confirmation).toHaveCount(0);
+  expect(requests()).toHaveLength(1);
+  expect(requests()[0].url).toMatch(/\/discard\/[a-f0-9]{40}\/1$/);
+  await file.click({ button: 'right' });
+  await expect(page.getByRole('button', { name: 'Include in download' })).toBeVisible();
+});
+
 test('the desktop file browser stays beside the video and marks the current file', async ({
   page,
 }) => {
   await setup(page, { videoCount: 2 });
   await expect(page.getByRole('dialog', { name: 'Northern Light', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: /01 - The coast/ }).click();
+  await page.getByRole('button', { name: /^01 - The coast/ }).click();
   const next = page.getByRole('button', { name: 'Next video' });
   const files = page.getByRole('button', { name: 'Show video files' });
   await expect(next).toBeVisible();
@@ -617,7 +712,7 @@ test('the desktop file browser stays beside the video and marks the current file
   const closedSize = await size();
   await files.click();
   const library = page.getByRole('region', { name: 'Video files' });
-  await expect(library.getByRole('button', { name: /01 - The coast/ })).toHaveAttribute(
+  await expect(library.getByRole('button', { name: /^01 - The coast/ })).toHaveAttribute(
     'aria-current',
     'true',
   );
@@ -632,7 +727,23 @@ test('the desktop file browser stays beside the video and marks the current file
   await files.click();
   await expect(library).toHaveCount(0);
   await expect.poll(size).toEqual(closedSize);
+  let allowPreparation!: () => void;
+  const preparation = new Promise<void>((resolve) => {
+    allowPreparation = resolve;
+  });
+  await page.route('**/v1/play/**', async (route) => {
+    if (route.request().method() === 'POST') await preparation;
+    await route.fallback();
+  });
   await next.click();
+  try {
+    await expect(page.getByRole('heading', { name: 'Preparing your video' })).toBeVisible();
+    await expect.poll(size).toEqual(closedSize);
+  } finally {
+    allowPreparation();
+  }
+  await expect(page.getByRole('heading', { name: 'Preparing your video' })).toHaveCount(0);
+  await expect.poll(size).toEqual(closedSize);
   await expect(page.locator('.watch-heading h2')).toHaveText('02 - Into the woods.mp4');
   await expect(next).toHaveCount(0);
 });
@@ -647,10 +758,10 @@ test('multiple files, matching mobile theme, file switching and touch targets', 
   await expect(list.getByRole('listitem')).toHaveCount(10);
   expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
   expect((await list.getByRole('button').first().boundingBox())!.height).toBeGreaterThanOrEqual(44);
-  await page.getByRole('button', { name: /01 - The coast/ }).click();
+  await page.getByRole('button', { name: /^01 - The coast/ }).click();
   await expect(page.locator('.drift-player')).toBeVisible();
   await page.getByRole('button', { name: 'Show video files' }).click();
-  await page.getByRole('button', { name: /10 - The long way home/ }).click();
+  await page.getByRole('button', { name: /^10 - The long way home/ }).click();
   await expect(page.locator('.watch-heading h2')).toHaveText(
     '10 - The long way home from the northern coast.mp4',
   );
@@ -673,6 +784,57 @@ test('multiple files, matching mobile theme, file switching and touch targets', 
     expect(t.h, t.label || 'control').toBeGreaterThanOrEqual(44);
   }
 });
+
+for (const viewport of [
+  { width: 320, height: 568 },
+  { width: 667, height: 375 },
+  { width: 768, height: 1024 },
+]) {
+  test(`file browsing keeps playback reachable at ${viewport.width}×${viewport.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await page.addInitScript(() => {
+      const tracks = Object.assign(
+        [
+          { label: 'English', language: 'en', enabled: true },
+          { label: 'Japanese', language: 'ja', enabled: false },
+        ],
+        { addEventListener() {}, removeEventListener() {} },
+      );
+      Object.defineProperty(HTMLMediaElement.prototype, 'audioTracks', { get: () => tracks });
+    });
+    await setup(page, { videoCount: 10, subtitles: true, discard: true });
+    const file = page.getByRole('button', { name: /^03 - The long way home/ });
+    await file.click();
+    await expect(page.getByLabel('Audio track', { exact: true })).toHaveValue('0');
+    const player = page.getByRole('dialog');
+    const dimensions = () =>
+      player.evaluate((dialog) => ({
+        dialog: dialog.clientHeight,
+        video: dialog.querySelector('video')!.clientHeight,
+      }));
+    const playback = await dimensions();
+    expect(playback.video).toBeGreaterThan(100);
+    await page.getByRole('button', { name: 'Show video files' }).click();
+    await expect.poll(dimensions).toEqual(playback);
+    const fullscreen = page.getByRole('button', { name: 'Enter fullscreen', exact: true });
+    await fullscreen.click({ trial: true });
+    await file.click({ button: 'right' });
+    const menu = page.getByRole('dialog', { name: 'Video file actions' });
+    await expect(menu).toBeVisible();
+    expect((await menu.boundingBox())!.width).toBeLessThanOrEqual(280);
+    await menu.getByRole('button', { name: 'Delete downloaded data…' }).click();
+    const confirmation = page.getByRole('dialog', { name: 'Delete downloaded data?' });
+    await confirmation.getByRole('button', { name: 'Cancel' }).click();
+    await page.getByRole('button', { name: 'Subtitles', exact: true }).click();
+    await page.getByRole('menuitemradio', { name: 'Off', exact: true }).click({ trial: true });
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: /^02 - Into the woods/ }).click();
+    await expect(page.getByRole('region', { name: 'Video files' })).toHaveCount(0);
+    await expect(player).toHaveAccessibleName('02 - Into the woods.mp4');
+  });
+}
 
 test('unavailable service has a useful retry state without losing the library', async ({
   page,
@@ -754,17 +916,32 @@ test('player fits available dialog height without scrolling at short viewport si
   }
 });
 
-test('mobile player aligns download status under the title without wrapping', async ({ page }) => {
+test('the player groups file details within the height of the film icon', async ({ page }) => {
   await setup(page);
   await expect(page.locator('.drift-player video')).toBeVisible();
-  for (const width of [320, 360, 390, 430]) {
+  for (const width of [1280, 320, 360, 390, 430]) {
     await page.setViewportSize({ width, height: 760 });
-    const title = await page.locator('.watch-title h2').boundingBox();
-    const download = await page.locator('.watch-download').boundingBox();
-    expect(download!.height).toBeLessThanOrEqual(21);
-    expect(download!.x).toBeCloseTo(title!.x, 0);
-    expect(download!.y).toBeGreaterThan(title!.y + title!.height);
-    expect(download!.x + download!.width).toBeLessThanOrEqual(width - 16);
+    const { title, download, torrent, heading, icon } = await page
+      .locator('.watch-heading')
+      .evaluate((element) => {
+        const bounds = (selector: string) => {
+          const { x, y, width, height } = element.querySelector(selector)!.getBoundingClientRect();
+          return { x, y, width, height };
+        };
+        return {
+          title: bounds('h2'),
+          download: bounds('.watch-download'),
+          torrent: bounds('p'),
+          heading: bounds('.watch-title'),
+          icon: bounds('.watch-mark'),
+        };
+      });
+    expect(torrent.x).toBeCloseTo(title.x, 0);
+    expect(download.y).toBeGreaterThan(title.y + title.height);
+    expect(torrent.y + torrent.height / 2).toBeCloseTo(download.y + download.height / 2, 0);
+    expect(download.x).toBeGreaterThan(torrent.x + torrent.width);
+    expect(heading.height).toBeLessThanOrEqual(icon.height);
+    expect(download.x + download.width).toBeLessThanOrEqual(width - 16);
   }
 });
 

@@ -3099,7 +3099,7 @@ summary {
     width: 20px;
     height: 20px;
   }
-  .context-menu {
+  .context-menu:not(.watch-file-menu) {
     left: 12px !important;
     right: 12px;
     top: auto !important;
@@ -3656,6 +3656,13 @@ dialog.player-dialog {
   overflow: auto;
   border-radius: 14px;
 }
+dialog.player-dialog:not(.player-chooser-dialog) {
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+dialog.player-dialog:not(.player-chooser-dialog)::-webkit-scrollbar {
+  display: none;
+}
 .player-chooser-dialog {
   --watch-dialog-width: 760px;
 }
@@ -3669,6 +3676,9 @@ dialog.player-dialog {
 .player-dialog .modal-header {
   gap: 12px;
 }
+.player-dialog:not(.player-chooser-dialog) .modal-header {
+  padding-block: 12px;
+}
 .watch-heading {
   display: flex;
   align-items: center;
@@ -3680,7 +3690,7 @@ dialog.player-dialog {
   color: var(--text);
   font-size: clamp(16px, 2.4vw, 20px);
   font-weight: 650;
-  line-height: 1.3;
+  line-height: 1.2;
   letter-spacing: -0.02em;
   overflow-wrap: anywhere;
 }
@@ -3707,8 +3717,8 @@ dialog.player-dialog {
 .watch-mark {
   display: grid;
   place-items: center;
-  width: 58px;
-  height: 58px;
+  width: 52px;
+  height: 52px;
   flex: 0 0 auto;
   border: 1px solid var(--border);
   border-radius: 13px;
@@ -3719,10 +3729,15 @@ dialog.player-dialog {
   min-width: 0;
   flex: 1;
 }
+.watch-mark + .watch-title h2,
+.watch-audio-notice {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .watch-heading p {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 3px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3734,10 +3749,16 @@ dialog.player-dialog {
   gap: 8px;
 }
 .watch-meta {
-  flex-wrap: wrap;
-  margin-top: 5px;
+  margin-top: 6px;
   color: var(--muted);
   font-size: 12px;
+  line-height: 16px;
+}
+.watch-meta .watch-download {
+  flex-shrink: 0;
+  border-inline-start: 1px solid var(--border);
+  padding-inline-start: 8px;
+  white-space: nowrap;
 }
 .watch-actions {
   flex-shrink: 0;
@@ -3810,10 +3831,14 @@ dialog.player-dialog {
   background: #090a0c;
   color: var(--text);
   --watch-accent: var(--blue);
-  --watch-controls-space: 96px;
+  --watch-controls-space: var(--watch-measured-controls-space, 97px);
   isolation: isolate;
 }
-.watch-canvas video {
+.watch-preparing {
+  padding-bottom: var(--watch-controls-space);
+}
+.watch-canvas video,
+.watch-preparing-frame {
   display: block;
   width: 100%;
   aspect-ratio: 16 / 9;
@@ -3832,16 +3857,27 @@ dialog.player-dialog {
   border-top: 1px solid var(--border);
 }
 .watch-controls-blocked {
-  display: none;
+  visibility: hidden;
 }
 .watch-resuming .watch-overlay {
   inset: 0;
 }
-.watch-control-row {
+.watch-control-row,
+.watch-transport,
+.watch-control-options {
   display: flex;
   align-items: center;
   gap: 2px;
   min-height: 44px;
+}
+.watch-control-row,
+.watch-control-options {
+  flex-wrap: wrap;
+}
+.watch-control-options {
+  margin-inline-start: auto;
+  justify-content: flex-end;
+  max-width: 100%;
 }
 .watch-control {
   display: inline-flex;
@@ -3910,9 +3946,6 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
 .watch-time > span,
 .watch-time media-time[type='duration'] {
   color: var(--muted);
-}
-.watch-control-spacer {
-  flex: 1;
 }
 .watch-timeline {
   display: flex;
@@ -4199,38 +4232,76 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
 .watch-file-list > li + li {
   border-top: 1px solid var(--border);
 }
+.watch-file-menu {
+  max-width: calc(100vw - 32px);
+}
+.watch-file-menu > button {
+  min-height: 44px;
+}
 .watch-with-library {
-  display: flex;
-  flex-direction: column;
+  position: relative;
+  isolation: isolate;
 }
 .watch-with-library > .watch-library {
-  order: -1;
+  position: absolute;
+  inset: 0 0 auto auto;
+  z-index: 3;
+  width: min(100%, 368px);
+  max-height: calc(100% - var(--watch-measured-controls-space, 97px));
+  padding: 10px 12px;
+  border-top: 0;
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-bottom-left-radius: 10px;
+  background: var(--surface);
 }
 .watch-with-library .watch-file-list {
   max-height: 27vh;
 }
-@media (min-width: 761px) {
+@media (max-width: 900px) {
+  .watch-with-library .watch-canvas:not(.watch-fullscreen) {
+    isolation: auto;
+  }
+  .watch-with-library .watch-canvas:not(.watch-fullscreen) .watch-big-play {
+    visibility: hidden;
+  }
+}
+@media (max-width: 760px) {
+  .watch-controls {
+    padding-inline: 10px;
+  }
+  .watch-volume,
+  .watch-audio > span {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .watch-with-library > .watch-library {
+    width: 100%;
+    border-left: 0;
+    border-bottom-left-radius: 0;
+  }
+}
+@media (min-width: 901px) {
   .watch-with-library {
     display: grid;
-    position: relative;
     grid-template-columns: minmax(0, 1fr) clamp(245px, 30%, 320px);
   }
-  .watch-with-library .watch-canvas:not(.watch-fullscreen) video {
-    height: var(--watch-full-width-height, auto);
+  .watch-with-library .watch-canvas:not(.watch-fullscreen) :is(video, .watch-preparing-frame) {
+    --watch-extra-controls: max(0px, var(--watch-controls-space) - 97px);
+    height: calc(var(--watch-full-width-height) - var(--watch-extra-controls));
+    max-height: min(calc(65vh - var(--watch-extra-controls)), var(--watch-video-height, 65vh));
   }
   .watch-with-library > .watch-library {
-    position: absolute;
     inset: 0 0 0 auto;
     width: clamp(245px, 30%, 320px);
-    padding-inline: 12px;
-    border-top: 0;
-    border-left: 1px solid var(--border);
+    max-height: none;
+    padding-block: 12px;
+    border-bottom: 0;
+    border-radius: 0;
   }
   .watch-with-library .watch-file-list {
     max-height: none;
-  }
-  .watch-with-library .watch-control-row {
-    flex-wrap: wrap;
   }
 }
 .watch-file {
@@ -4272,12 +4343,26 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   overflow-wrap: anywhere;
   line-height: 1.45;
 }
-.watch-file-name small {
-  display: block;
+.watch-file-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 5px;
   color: var(--muted);
   margin-top: 2px;
   font-size: 12px;
   line-height: 1.4;
+}
+.watch-file-progress {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.watch-file-progress.complete {
+  color: var(--teal);
+}
+.watch-file-progress.partial {
+  color: var(--blue);
 }
 .watch-file-action {
   color: var(--muted);
@@ -4319,8 +4404,8 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   visibility: visible;
   pointer-events: auto;
 }
-.watch-fullscreen:not([data-controls-visible]):not(.watch-keyboard),
-.watch-fullscreen:not([data-controls-visible]):not(.watch-keyboard) video {
+.watch-fullscreen:not([data-controls-visible]),
+.watch-fullscreen:not([data-controls-visible]) video {
   cursor: none;
 }
 @supports (max-height: 100dvh) {
@@ -4366,6 +4451,17 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
     width: 26px;
     height: 26px;
   }
+  .watch-mark + .watch-title h2 {
+    line-height: 17px;
+  }
+  .watch-meta {
+    margin-top: 5px;
+    line-height: 14px;
+  }
+  .watch-meta .watch-download svg {
+    width: 12px;
+    height: 12px;
+  }
   .watch-actions {
     order: 1;
     flex-basis: 100%;
@@ -4377,18 +4473,20 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   .watch-placeholder {
     min-height: 260px;
   }
-  .watch-canvas video {
+  .watch-canvas video,
+  .watch-preparing-frame {
     max-height: min(52vh, var(--watch-video-height, 52vh));
   }
   .watch-canvas {
-    --watch-controls-space: 92px;
+    --watch-controls-space: var(--watch-measured-controls-space, 93px);
   }
   .watch-controls {
     padding: 0 6px 4px;
   }
-  .watch-control-row {
+  .watch-control-row,
+  .watch-transport,
+  .watch-control-options {
     gap: 0;
-    flex-wrap: wrap;
   }
   .watch-control {
     width: 44px;
@@ -4403,9 +4501,6 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
     padding: 0 5px;
     gap: 4px;
     font-size: 12px;
-  }
-  .watch-control-spacer {
-    min-width: 0;
   }
   .watch-timeline {
     margin: 0 8px;
