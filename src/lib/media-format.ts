@@ -35,16 +35,30 @@ function element(bytes: Uint8Array, at: number, limit: number): Element | undefi
 }
 
 /** Read only the Matroska Tracks header. Never scan through video frame bytes. */
-export function matroskaAudioCodec(bytes: Uint8Array): string | undefined {
-  const tracks: { codec: string; preferred: boolean }[] = [];
+export type MatroskaTrack = {
+  number: number;
+  type: number;
+  codec: string;
+  preferred: boolean;
+  language: string;
+  label: string;
+};
+export function matroskaTracks(bytes: Uint8Array): MatroskaTrack[] {
+  const tracks: MatroskaTrack[] = [];
+  const decoder = new TextDecoder();
   function scan(start: number, end: number, depth: number) {
     if (depth > 3) return;
     for (let at = start; at < Math.min(end, bytes.length);) {
       const e = element(bytes, at, Math.min(end, bytes.length));
       if (!e || e.end <= at) return;
-      if (e.id === 0x18538067 || e.id === 0x1654ae6b) scan(e.start, e.end, depth + 1);
+      if (e.id === 0x18538067 || (e.id === 0x1654ae6b && e.end <= bytes.length))
+        scan(e.start, e.end, depth + 1);
       if (e.id === 0xae && e.end <= bytes.length) {
         let type = 0;
+        let number = 0;
+        let label = '';
+        let language = '';
+        let languageTag = '';
         let codec = '';
         let preferred = true;
         for (let p = e.start; p < e.end;) {
@@ -52,11 +66,17 @@ export function matroskaAudioCodec(bytes: Uint8Array): string | undefined {
           if (!field || field.end > e.end || field.end <= p) break;
           if (field.id === 0x83) type = bytes[field.start];
           if (field.id === 0x88) preferred = bytes[field.start] !== 0;
-          if (field.id === 0x86)
-            codec = new TextDecoder().decode(bytes.subarray(field.start, field.end));
+          const value = bytes.subarray(field.start, field.end);
+          if (field.id === 0xd7 && value.length <= 4)
+            for (const byte of value) number = number * 256 + byte;
+          if (field.id === 0x86) codec = decoder.decode(value);
+          if (field.id === 0x22b59c) language = decoder.decode(value.subarray(0, 35));
+          if (field.id === 0x22b59d) languageTag = decoder.decode(value.subarray(0, 35));
+          if (field.id === 0x536e) label = decoder.decode(value.subarray(0, 160));
           p = field.end;
         }
-        if (type === 2 && codec) tracks.push({ codec, preferred });
+        if (number && codec)
+          tracks.push({ number, type, codec, preferred, language: languageTag || language, label });
       }
       // Clusters contain frames, not header metadata.
       if (e.id === 0x1f43b675) return;
@@ -64,7 +84,7 @@ export function matroskaAudioCodec(bytes: Uint8Array): string | undefined {
     }
   }
   scan(0, bytes.length, 0);
-  return (tracks.find((track) => track.preferred) ?? tracks[0])?.codec;
+  return tracks;
 }
 
 export function needsAudioDecoder(codec: string | undefined, video: HTMLVideoElement): boolean {
@@ -82,7 +102,7 @@ export function needsAudioDecoder(codec: string | undefined, video: HTMLVideoEle
 }
 
 /** A bounded probe also handles servers which ignore Range without reading a whole movie. */
-export async function probeMatroskaAudio(url: string, signal: AbortSignal) {
+export async function probeMatroskaTracks(url: string, signal: AbortSignal) {
   const request = new AbortController();
   const abort = () => request.abort();
   signal.addEventListener('abort', abort, { once: true });
@@ -96,7 +116,7 @@ export async function probeMatroskaAudio(url: string, signal: AbortSignal) {
       credentials: 'include',
       signal: request.signal,
     });
-    if (!response.ok || !response.body) return;
+    if (!response.ok || !response.body) return [];
     reader = response.body.getReader();
     const bytes = new Uint8Array(limit);
     let length = 0;
@@ -106,17 +126,35 @@ export async function probeMatroskaAudio(url: string, signal: AbortSignal) {
       const count = Math.min(value.length, limit - length);
       bytes.set(value.subarray(0, count), length);
       length += count;
-      const codec = matroskaAudioCodec(bytes.subarray(0, length));
-      if (codec) return codec;
+      const tracks = matroskaTracks(bytes.subarray(0, length));
+      if (tracks.length) return tracks;
     }
-    return matroskaAudioCodec(bytes.subarray(0, length));
+    return matroskaTracks(bytes.subarray(0, length));
   } catch {
     // An incomplete header must not turn a temporary download wait into a format error.
-    return;
+    return [];
   } finally {
     clearTimeout(timer);
     signal.removeEventListener('abort', abort);
     await reader?.cancel().catch(() => {});
     request.abort();
   }
+}
+
+export function mediaTrackLabel(track: { label?: string; language?: string }, fallback: string) {
+  const code = track.language;
+  let language = code && code !== 'und' ? code : '';
+  if (language && typeof Intl.DisplayNames === 'function') {
+    try {
+      language = new Intl.DisplayNames(['en'], { type: 'language' }).of(language) ?? language;
+    } catch {
+      // Some containers store arbitrary strings in the language field.
+    }
+  }
+  if (track.label && track.label !== code) {
+    if (!language || track.label.toLowerCase().startsWith(language.toLowerCase()))
+      return track.label;
+    return `${language} · ${track.label}`;
+  }
+  return language || track.label || fallback;
 }

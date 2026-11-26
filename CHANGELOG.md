@@ -5,6 +5,14 @@ Release tags and web/native package versions use the same semantic version.
 
 ## [Unreleased]
 
+### Added
+
+- Switch compatible Matroska audio tracks over HTTP and select embedded SubRip subtitles alongside sidecar captions while a torrent downloads.
+
+### Changed
+
+- Put the filename, download status, file controls, and close button in one player header with a larger film icon.
+
 ## [0.2.0] - 2026-11-26
 
 ### Added

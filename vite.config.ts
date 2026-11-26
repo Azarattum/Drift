@@ -2,7 +2,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
-import pkg from './package.json';
+import pkg from './package.json' with { type: 'json' };
 import { formatAssets } from './scripts/format-assets.ts';
 export default defineConfig({
   base: './',
@@ -34,7 +34,7 @@ export default defineConfig({
       avbridge: fileURLToPath(new URL('./node_modules/avbridge/src/index.ts', import.meta.url)),
     },
   },
-  optimizeDeps: { include: ['avbridge'] },
+  optimizeDeps: { include: ['avbridge', 'mediabunny'] },
   server: {
     proxy: process.env.DRIFT_RPC_PROXY
       ? { '/transmission/rpc': { target: process.env.DRIFT_RPC_PROXY, changeOrigin: true } }

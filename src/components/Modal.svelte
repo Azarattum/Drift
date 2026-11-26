@@ -7,6 +7,8 @@
   let {
     title,
     titleIcon,
+    titleDetails,
+    headerActions,
     close,
     children,
     wide = false,
@@ -14,6 +16,8 @@
   }: {
     title: string;
     titleIcon?: Snippet;
+    titleDetails?: Snippet;
+    headerActions?: Snippet;
     close: () => void;
     children: Snippet;
     wide?: boolean;
@@ -76,14 +80,18 @@
 >
   <div class="modal-body">
     <header class="modal-header">
-      <h2 id={titleId}>
-        {#if titleIcon}
-          {@render titleIcon()}
-          <span>{title}</span>
-        {:else}
-          {title}
-        {/if}
-      </h2>
+      {#if player}
+        <div class="watch-heading">
+          {@render titleIcon?.()}
+          <div class="watch-title">
+            <h2 id={titleId}>{title}</h2>
+            {@render titleDetails?.()}
+          </div>
+        </div>
+        {@render headerActions?.()}
+      {:else}
+        <h2 id={titleId}>{title}</h2>
+      {/if}
       <button class="icon-button" aria-label="Close dialog" onclick={close}><X size={18} /></button>
     </header>
     {@render children()}

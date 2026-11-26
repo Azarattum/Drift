@@ -21,7 +21,7 @@ index 11ccfcd96f4c6824f3acefdd0218ce5fee617b7d..bc62c91029958e7ca06c4ae445fbf35c
    // requests instead of buffering the whole file.
 -  const handle: LibavInputHandle = await prepareLibavInput(libav as unknown as Parameters<typeof prepareLibavInput>[0], filename, source);
 +  const handle: LibavInputHandle = await prepareLibavInput(libav as unknown as Parameters<typeof prepareLibavInput>[0], filename, source, transport);
- 
+
    let fmt_ctx: number | undefined;
    let streams: LibavStream[] = [];
 diff --git a/src/probe/index.ts b/src/probe/index.ts
@@ -29,7 +29,7 @@ index 143d8178c80c91110cab3df640e4bbd8f0bc08d5..51c36329a7b8031bf0777dd2b9ce46ac
 --- a/src/probe/index.ts
 +++ b/src/probe/index.ts
 @@ -42,7 +42,7 @@ export async function probe(
- 
+
    if (MEDIABUNNY_CONTAINERS.has(sniffed)) {
      try {
 -      const result = await probeWithMediabunny(normalized, sniffed);
@@ -85,18 +85,18 @@ index 7778c44a96b7db4e61c72042de2c023c51761f52..88e11fad0eee56d6779077a2f6beb199
 +    source: await buildMediabunnySource(mb, source, transport),
      formats: mb.ALL_FORMATS,
    });
- 
+
 +  try {
    const allTracks = await input.getTracks();
    const duration = await safeNumber(() => input.computeDuration());
- 
+
 @@ -75,6 +78,7 @@ export async function probeWithMediabunny(
      probedBy: "mediabunny",
      duration,
    };
 +  } finally { input.dispose(); }
  }
- 
+
  /**
 @@ -87,9 +91,10 @@ export async function probeWithMediabunny(
  export async function buildMediabunnySource(
@@ -111,13 +111,51 @@ index 7778c44a96b7db4e61c72042de2c023c51761f52..88e11fad0eee56d6779077a2f6beb199
    return new mb.BlobSource(source.blob);
  }
 diff --git a/src/strategies/fallback/decoder.ts b/src/strategies/fallback/decoder.ts
-index 276a1d01fade2a3bab1414389ee0e04572bdc4d1..d8f7032d3a9f4646f45816d2ce6551765fe3b6ac 100644
+index 276a1d01fade2a3bab1414389ee0e04572bdc4d1..bd2177c9b866ef3c0096785bcbc40d2db65c2525 100644
 --- a/src/strategies/fallback/decoder.ts
 +++ b/src/strategies/fallback/decoder.ts
-@@ -1023,10 +1023,11 @@ export async function startDecoder(opts: StartDecoderOptions): Promise<DecoderHa
+@@ -98,15 +98,16 @@ export async function startDecoder(opts: StartDecoderOptions): Promise<DecoderHa
+
+   const [fmt_ctx, streams] = await libav.ff_init_demuxer_file(opts.filename);
+   const videoStream = streams.find((s) => s.codec_type === libav.AVMEDIA_TYPE_VIDEO) ?? null;
+-  // Audio stream is mutable so setAudioTrack() can swap it. Default to the
+-  // track the context picked first (matches probe ordering). We resolve by
+-  // container id so the selection survives stream reordering.
+-  const firstAudioTrackId = opts.context.audioTracks[0]?.id;
++  // Mediabunny reports container track IDs, while libav indexes streams from zero.
++  const audioStreams = streams.filter((stream) => stream.codec_type === libav.AVMEDIA_TYPE_AUDIO);
++  function findAudioStream(id: number) {
++    if (opts.context.probedBy === "mediabunny" && opts.context.audioTracks.length === audioStreams.length) {
++      return audioStreams[opts.context.audioTracks.findIndex((track) => track.id === id)];
++    }
++    return audioStreams.find((stream) => stream.index === id);
++  }
+   let audioStream: LibavStream | null =
+-    (firstAudioTrackId != null
+-      ? streams.find((s) => s.codec_type === libav.AVMEDIA_TYPE_AUDIO && s.index === firstAudioTrackId)
+-      : undefined) ??
+-    streams.find((s) => s.codec_type === libav.AVMEDIA_TYPE_AUDIO) ?? null;
++    findAudioStream(opts.context.audioTracks[0]?.id ?? -1) ?? audioStreams[0] ?? null;
+
+   if (!videoStream && !audioStream) {
+     throw new Error("fallback decoder: file has no decodable streams");
+@@ -885,10 +886,8 @@ export async function startDecoder(opts: StartDecoderOptions): Promise<DecoderHa
+     },
+
+     async setAudioTrack(trackId, timeSec) {
+-      if (audioStream && audioStream.index === trackId) return;
+-      const newStream = streams.find(
+-        (s) => s.codec_type === libav.AVMEDIA_TYPE_AUDIO && s.index === trackId,
+-      );
++      const newStream = findAudioStream(trackId);
++      if (newStream === audioStream) return;
+       if (!newStream) {
+         console.warn("[avbridge] fallback: setAudioTrack — no stream with id", trackId);
+         return;
+@@ -1023,10 +1022,11 @@ export async function startDecoder(opts: StartDecoderOptions): Promise<DecoderHa
        diagFramesLoggedSinceSeek = 0;
        diagFrameKeysDumped = false;
- 
+
 -      // The renderer & audio output are reset by the fallback session
 -      // wrapper that called us — see strategies/fallback/index.ts.
 -
@@ -139,7 +177,7 @@ index a8ce9ddf3c50b86d643f761dc6d7e6319349c44b..0f90b518a2c088b912132cd885ebbbee
    const { normalizeSource } = await import("../../util/source.js");
 -  const source = await normalizeSource(ctx.source);
 +  const source = await normalizeSource(ctx.source, transport);
- 
+
    const fps = ctx.videoTracks[0]?.fps ?? 30;
    const audio = new AudioOutput();
 @@ -276,8 +276,6 @@ export async function createFallbackSession(
@@ -162,7 +200,7 @@ index b37767d10af9aadeb1939f42edb4d3cec618e888..c71488c564c36881cb1c2207de681642
 -  const variantUrl = `${base}/libav-${variant}.mjs`;
 +  const variantUrl = `${base}/libav-${variant}.js`;
    dbg.info("libav-load", `fetching ${variantUrl}`);
- 
+
    // Preflight HEAD-ish check: issue a bytes=0-0 range request so a missing
 diff --git a/src/strategies/fallback/video-renderer.ts b/src/strategies/fallback/video-renderer.ts
 index e7b484be9e5ba9c05bdfc3a2256ab3bb44e5940a..c19944bc3d2f53e4693623570546dc7e12a93488 100644
@@ -174,23 +212,47 @@ index e7b484be9e5ba9c05bdfc3a2256ab3bb44e5940a..c19944bc3d2f53e4693623570546dc7e
     */
 -  readonly queueHighWater = 256;
 +  readonly queueHighWater = 16;
- 
+
    enqueue(frame: VideoFrame): void {
      if (this.destroyed) {
 diff --git a/src/strategies/hybrid/decoder.ts b/src/strategies/hybrid/decoder.ts
-index ae243059d816c0a7b7fab0dcb7107ce04665a4bf..5aac07ba25f6f0663588b7442d86032a20861885 100644
+index ae243059d816c0a7b7fab0dcb7107ce04665a4bf..e559a66aba3a7d5ee64c1c7167aa28e0997dbf16 100644
 --- a/src/strategies/hybrid/decoder.ts
 +++ b/src/strategies/hybrid/decoder.ts
-@@ -95,6 +95,7 @@ export async function startHybridDecoder(opts: StartHybridDecoderOptions): Promi
- 
+@@ -70,14 +70,16 @@ export async function startHybridDecoder(opts: StartHybridDecoderOptions): Promi
+   const readPkt = await libav.av_packet_alloc();
+   const [fmt_ctx, streams] = await libav.ff_init_demuxer_file(opts.filename);
+   const videoStream = streams.find((s) => s.codec_type === libav.AVMEDIA_TYPE_VIDEO) ?? null;
+-  // Audio stream is mutable (setAudioTrack swaps it). Prefer the id the
+-  // probe layer listed first so both entry points agree.
+-  const firstAudioTrackId = opts.context.audioTracks[0]?.id;
++  // Mediabunny reports container track IDs, while libav indexes streams from zero.
++  const audioStreams = streams.filter((stream) => stream.codec_type === libav.AVMEDIA_TYPE_AUDIO);
++  function findAudioStream(id: number) {
++    if (opts.context.probedBy === "mediabunny" && opts.context.audioTracks.length === audioStreams.length) {
++      return audioStreams[opts.context.audioTracks.findIndex((track) => track.id === id)];
++    }
++    return audioStreams.find((stream) => stream.index === id);
++  }
+   let audioStream: LibavStream | null =
+-    (firstAudioTrackId != null
+-      ? streams.find((s) => s.codec_type === libav.AVMEDIA_TYPE_AUDIO && s.index === firstAudioTrackId)
+-      : undefined) ??
+-    streams.find((s) => s.codec_type === libav.AVMEDIA_TYPE_AUDIO) ?? null;
++    findAudioStream(opts.context.audioTracks[0]?.id ?? -1) ?? audioStreams[0] ?? null;
+
+   if (!videoStream && !audioStream) {
+     throw new Error("hybrid decoder: file has no decodable streams");
+@@ -95,6 +97,7 @@ export async function startHybridDecoder(opts: StartHybridDecoderOptions): Promi
+
    // ── WebCodecs VideoDecoder ────────────────────────────────────────────
    let videoDecoder: VideoDecoder | null = null;
 +  let discardVideoBeforeUs = 0;
    let videoTimeBase: [number, number] | undefined;
- 
+
    if (videoStream) {
-@@ -107,6 +108,10 @@ export async function startHybridDecoder(opts: StartHybridDecoderOptions): Promi
- 
+@@ -107,6 +110,10 @@ export async function startHybridDecoder(opts: StartHybridDecoderOptions): Promi
+
        videoDecoder = new VideoDecoder({
          output: (frame: VideoFrame) => {
 +          if (frame.timestamp < discardVideoBeforeUs) {
@@ -200,19 +262,32 @@ index ae243059d816c0a7b7fab0dcb7107ce04665a4bf..5aac07ba25f6f0663588b7442d86032a
            opts.renderer.enqueue(frame);
            videoFramesDecoded++;
          },
+@@ -462,10 +469,8 @@ export async function startHybridDecoder(opts: StartHybridDecoderOptions): Promi
+     },
+
+     async setAudioTrack(trackId, timeSec) {
+-      if (audioStream && audioStream.index === trackId) return;
+-      const newStream = streams.find(
+-        (s) => s.codec_type === libav.AVMEDIA_TYPE_AUDIO && s.index === trackId,
+-      );
++      const newStream = findAudioStream(trackId);
++      if (newStream === audioStream) return;
+       if (!newStream) {
+         console.warn("[avbridge] hybrid: setAudioTrack — no stream with id", trackId);
+         return;
 @@ -540,6 +545,8 @@ export async function startHybridDecoder(opts: StartHybridDecoderOptions): Promi
        }
        if (destroyed) return;
- 
+
 +      discardVideoBeforeUs = Math.round(timeSec * 1_000_000);
 +
        try {
          const tsUs = Math.floor(timeSec * 1_000_000);
          const [tsLo, tsHi] = libav.f64toi64
 @@ -571,6 +578,10 @@ export async function startHybridDecoder(opts: StartHybridDecoderOptions): Promi
- 
+
        syntheticVideoUs = Math.round(timeSec * 1_000_000);
- 
+
 +      // Reset while the old pump is stopped, before the new pump can enqueue frames.
 +      await opts.audio.reset(timeSec);
 +      opts.renderer.flush();
@@ -227,11 +302,11 @@ index 7e8b882b78c8af242f7966773ef2af6ce1c0efc9..16ec18d1526828e3c65db7e6ae9a0293
 @@ -15,7 +15,7 @@ import { makeTimeRanges } from "../../util/time-ranges.js";
   * onFatalError callback that the player wires to its escalation mechanism).
   */
- 
+
 -const READY_AUDIO_BUFFER_SECONDS = 0.3;
 +const READY_AUDIO_BUFFER_SECONDS = 0.1;
  const READY_TIMEOUT_SECONDS = 10;
- 
+
  export async function createHybridSession(
 @@ -26,7 +26,7 @@ export async function createHybridSession(
    // Normalize the source so URL inputs go through the libav HTTP block
@@ -239,7 +314,7 @@ index 7e8b882b78c8af242f7966773ef2af6ce1c0efc9..16ec18d1526828e3c65db7e6ae9a0293
    const { normalizeSource } = await import("../../util/source.js");
 -  const source = await normalizeSource(ctx.source);
 +  const source = await normalizeSource(ctx.source, transport);
- 
+
    const fps = ctx.videoTracks[0]?.fps ?? 30;
    const audio = new AudioOutput();
 @@ -135,8 +135,6 @@ export async function createHybridSession(
@@ -251,3 +326,26 @@ index 7e8b882b78c8af242f7966773ef2af6ce1c0efc9..16ec18d1526828e3c65db7e6ae9a0293
      if (wasPlaying) {
        await waitForBuffer();
        await audio.start();
+diff --git a/src/util/libav-http-reader.ts b/src/util/libav-http-reader.ts
+index 87736ec8e39163b93f9ae8745e54b4037e12b874..aca6f144c75f7d0b4f3b855d4322dacf815df8a2 100644
+--- a/src/util/libav-http-reader.ts
++++ b/src/util/libav-http-reader.ts
+@@ -74,7 +74,7 @@ export interface AttachLibavHttpReaderOptions {
+   /** Optional `RequestInit` extras (mode, credentials, headers, etc.). */
+   requestInit?: RequestInit;
+   /** Override fetch (for testing). Defaults to globalThis.fetch. */
+-  fetchFn?: typeof fetch;
++  fetchFn?: import("../types.js").FetchFn;
+   /**
+    * Byte budget for the LRU block cache. Defaults to 8 MB. Set to `0`
+    * to disable caching. Raise this (e.g. 32 MB) for apps that play
+@@ -267,7 +267,8 @@ export async function attachLibavHttpReader(
+         Range: `bytes=${pos}-${end}`,
+       },
+     });
+-    if (res.status !== 206 && res.status !== 200) {
++    if (res.status !== 206) {
++      await res.body?.cancel();
+       throw new Error(
+         `libav HTTP reader: Range request bytes=${pos}-${end} returned ${res.status}`,
+       );

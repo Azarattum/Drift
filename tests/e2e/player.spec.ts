@@ -85,6 +85,7 @@ const nativeMedia = await readFile('tests/assets/playback.mp4');
 // Synthetic 1920×800 H.264 video and 48 kHz, 5.1 DTS tone generated with FFmpeg.
 const dtsMedia = await readFile('tests/assets/playback-dts.mkv');
 const audioTrackMedia = await readFile('tests/assets/playback-audio-tracks.mkv');
+const embeddedMedia = await readFile('tests/assets/playback-embedded.mkv');
 async function setup(
   page: Page,
   options: {
@@ -99,10 +100,19 @@ async function setup(
     priorityWaiting?: boolean;
     dts?: boolean;
     multipleAudio?: boolean;
+    embedded?: boolean;
   } = {},
 ) {
-  const matroska = options.dts || options.multipleAudio;
-  const media = options.multipleAudio ? audioTrackMedia : options.dts ? dtsMedia : nativeMedia;
+  const matroska = options.dts || options.multipleAudio || options.embedded;
+  const media = options.embedded
+    ? embeddedMedia
+    : options.multipleAudio
+      ? audioTrackMedia
+      : options.dts
+        ? dtsMedia
+        : nativeMedia;
+  const verifiedEnd =
+    options.embedded && options.partial ? Math.floor(media.length * 0.8) : media.length;
   const t = torrent({
     name: 'Northern Light',
     percentDone: 1,
@@ -210,8 +220,12 @@ async function setup(
       .request()
       .headers()
       .range?.match(/bytes=(\d+)-(\d*)/);
-    const start = range ? Number(range[1]) : 0,
-      end = range?.[2] ? Math.min(media.length - 1, Number(range[2])) : media.length - 1;
+    const start = range ? Number(range[1]) : 0;
+    const end = range?.[2] ? Math.min(verifiedEnd - 1, Number(range[2])) : verifiedEnd - 1;
+    if (start >= verifiedEnd) {
+      await mediaGate;
+      return route.fulfill({ status: 503, headers }).catch(() => {});
+    }
     await route.fulfill({
       status: range ? 206 : 200,
       body: media.subarray(start, end + 1),
@@ -228,7 +242,7 @@ async function setup(
   await expect(page.locator('.torrent-row')).toHaveCount(1);
   await page.locator('.torrent-row').click();
   await page.getByRole('button', { name: 'Watch video', exact: true }).click();
-  return { t, calls, rpcCalls };
+  return { t, calls, rpcCalls, releaseMedia };
 }
 
 test('real playback, Video.js controls, resume, keyboard and close cleanup', async ({ page }) => {
@@ -326,7 +340,7 @@ test('real playback, Video.js controls, resume, keyboard and close cleanup', asy
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
     .toBeGreaterThan(24);
-  await page.locator('.watch-heading h3').click();
+  await page.locator('.watch-heading h2').click();
   await page.keyboard.press('k');
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
   await page.keyboard.press('Escape');
@@ -608,7 +622,7 @@ test('the desktop file browser stays beside the video and marks the current file
   expect(separation.x).toBeGreaterThanOrEqual(-1);
   expect(separation.y).toBeCloseTo(0, 0);
   await next.click();
-  await expect(page.locator('.watch-heading h3')).toHaveText('02 - Into the woods.mp4');
+  await expect(page.locator('.watch-heading h2')).toHaveText('02 - Into the woods.mp4');
   await expect(next).toHaveCount(0);
 });
 
@@ -626,7 +640,7 @@ test('multiple files, matching mobile theme, file switching and touch targets', 
   await expect(page.locator('.drift-player')).toBeVisible();
   await page.getByRole('button', { name: 'Show video files' }).click();
   await page.getByRole('button', { name: /10 - The long way home/ }).click();
-  await expect(page.locator('.watch-heading h3')).toHaveText(
+  await expect(page.locator('.watch-heading h2')).toHaveText(
     '10 - The long way home from the northern coast.mp4',
   );
   expect(
@@ -662,7 +676,7 @@ test('unavailable service has a useful retry state without losing the library', 
     const spacing = await page.locator('.player-dialog .modal-header').evaluate((header) => {
       const bounds = header.getBoundingClientRect();
       const close = header.querySelector('button')!.getBoundingClientRect();
-      const label = header.querySelector('h2')!.getBoundingClientRect();
+      const label = header.querySelector('.watch-heading')!.getBoundingClientRect();
       return {
         top: close.top - bounds.top,
         bottom: bounds.bottom - close.bottom,
@@ -734,7 +748,7 @@ test('mobile player aligns download status under the title without wrapping', as
   await expect(page.locator('.drift-player video')).toBeVisible();
   for (const width of [320, 360, 390, 430]) {
     await page.setViewportSize({ width, height: 760 });
-    const title = await page.locator('.watch-title h3').boundingBox();
+    const title = await page.locator('.watch-title h2').boundingBox();
     const download = await page.locator('.watch-download').boundingBox();
     expect(download!.height).toBeLessThanOrEqual(21);
     expect(download!.x).toBeCloseTo(title!.x, 0);
@@ -783,6 +797,94 @@ test('native playback never downloads the optional format engine or WASM', async
   expect(requests.filter((url) => /format-engine|format-codecs|avbridge|\.wasm/.test(url))).toEqual(
     [],
   );
+});
+
+test('switches embedded audio and subtitles from verified ranges over HTTP', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName !== 'chromium',
+    'Exercises the browser path without native track enumeration.',
+  );
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'isSecureContext', { value: false });
+    Object.defineProperty(HTMLMediaElement.prototype, 'audioTracks', { get: () => undefined });
+  });
+  const { calls, releaseMedia } = await setup(page, {
+    embedded: true,
+    partial: true,
+    subtitles: true,
+  });
+  page.once('close', releaseMedia);
+  const video = page.locator('video');
+  const audio = page.getByLabel('Audio track', { exact: true });
+  await expect(audio.locator('option')).toHaveText(['Japanese', 'English']);
+  await expect(audio).toHaveValue('0');
+  await video.evaluate((element: HTMLVideoElement) => {
+    const context = new AudioContext();
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 2048;
+    context.createMediaElementSource(element).connect(analyser).connect(context.destination);
+    Object.assign(element, { trackAnalyser: analyser });
+    void context.resume();
+  });
+  const frequency = () =>
+    video.evaluate((element) => {
+      const analyser = (element as HTMLVideoElement & { trackAnalyser: AnalyserNode })
+        .trackAnalyser;
+      const values = new Float32Array(analyser.frequencyBinCount);
+      analyser.getFloatFrequencyData(values);
+      const peak = values.indexOf(Math.max(...values));
+      return Math.round((peak * analyser.context.sampleRate) / analyser.fftSize);
+    });
+  await expect.poll(frequency).toBeGreaterThan(400);
+  await expect.poll(frequency).toBeLessThan(470);
+  const showingCue = () =>
+    video.evaluate((v: HTMLVideoElement) => {
+      const track = Array.from(v.textTracks).find((item) => item.mode === 'showing');
+      return (track?.cues?.[0] as VTTCue | undefined)?.text;
+    });
+  await page.getByRole('button', { name: 'Subtitles', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'English [Embedded]', exact: true }).click();
+  await expect.poll(showingCue, { timeout: 25000 }).toBe('Embedded English captions.');
+
+  await video.evaluate((v: HTMLVideoElement) => {
+    v.pause();
+    v.currentTime = 1.5;
+  });
+  await audio.selectOption({ label: 'English' });
+  await expect(audio).toHaveValue('1', { timeout: 25000 });
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeCloseTo(1.5, 1);
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeGreaterThan(1.75);
+
+  await expect.poll(frequency).toBeGreaterThan(840);
+  await expect.poll(frequency).toBeLessThan(920);
+  await expect.poll(showingCue).toBe('Embedded English captions.');
+
+  await page.getByRole('button', { name: 'Subtitles', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'English', exact: true }).click();
+  await expect.poll(showingCue).toBe('The coast — English captions.');
+  await video.evaluate((element: HTMLVideoElement) => {
+    element.currentTime = 40;
+  });
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeGreaterThan(40.2);
+  await expect(audio).toHaveValue('1');
+  await expect.poll(frequency).toBeGreaterThan(840);
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  releaseMedia();
+  expect(
+    calls.filter((call) => call.method === 'POST' && call.url.includes('/play/')),
+  ).toHaveLength(1);
+  expect(calls.some((call) => call.url.includes('/media/') && !!call.headers.range)).toBe(true);
 });
 
 test('the format engine switches tracks during Matroska playback', async ({

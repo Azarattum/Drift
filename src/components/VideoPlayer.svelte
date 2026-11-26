@@ -39,7 +39,14 @@
     type VideoFile,
   } from '../lib/playback';
   import { loadPlayerEngine } from '../lib/player-engine';
-  import { canEnhanceFormats, needsAudioDecoder, probeMatroskaAudio } from '../lib/media-format';
+  import {
+    canEnhanceFormats,
+    mediaTrackLabel,
+    needsAudioDecoder,
+    probeMatroskaTracks,
+    type MatroskaTrack,
+  } from '../lib/media-format';
+  import type { openEmbeddedSubtitles } from '../lib/embedded-subtitles';
   import type { FormatEngine } from '../lib/format-engine';
   import { fetchSubtitle, subtitleLabel, type SubtitleSource } from '../lib/subtitles';
   let { torrent, fileIndex, close }: { torrent: Torrent; fileIndex?: number; close: () => void } =
@@ -55,6 +62,7 @@
   let enhancing = $state(false);
   let formatAttempted = false;
   let formatProbed = false;
+  let containerProbe: Promise<void> | undefined;
   let formatEngine: FormatEngine | undefined;
   let formatCleanup: Promise<void> = Promise.resolve();
   let audioNotice = $state('');
@@ -65,9 +73,28 @@
   let audioIndex = $state(-1);
   let audioSwitching = $state(false);
   let audioStatus = $state('');
+  let containerAudio = $state<MatroskaTrack[]>([]);
+  let containerTracks: MatroskaTrack[] = [];
+  let remuxed = $state(false);
+  let remuxRequest: AbortController | null = null;
+  let remuxPrevious: AbortController | null = null;
+  let restorePause = false;
+  let audioOptionsSource = $derived(
+    enhanced
+      ? formatAudioTracks
+      : nativeAudioTracks.length > 1
+        ? nativeAudioTracks
+        : containerAudio,
+  );
   let audioOptions = $derived(
-    (enhanced ? formatAudioTracks : nativeAudioTracks).map(
-      (track, i) => ('label' in track && track.label) || track.language || `Track ${i + 1}`,
+    audioOptionsSource.map(
+      (track, i) =>
+        (!enhanced &&
+          !remuxed &&
+          nativeAudioTracks.length > 1 &&
+          'label' in track &&
+          track.label) ||
+        mediaTrackLabel(track, `Track ${i + 1}`),
     ),
   );
   $effect(() => {
@@ -75,9 +102,11 @@
       ?.audioTracks;
     function update() {
       nativeAudioTracks = Array.from(tracks ?? []);
-      audioIndex = nativeAudioTracks.findIndex((track) => track.enabled);
+      if (nativeAudioTracks.length > 1)
+        audioIndex = nativeAudioTracks.findIndex((track) => track.enabled);
+      else if (!containerAudio.length) audioIndex = -1;
     }
-    if (enhanced) return;
+    if (enhanced || remuxed) return;
     untrack(update);
     for (const event of ['addtrack', 'removetrack', 'change'])
       tracks?.addEventListener(event, update);
@@ -90,6 +119,10 @@
     audioStatus = '';
     const engine = formatEngine;
     if (!engine) {
+      if (remuxed || nativeAudioTracks.length <= 1) {
+        if (containerAudio[index] && index !== audioIndex) await switchStreamAudio(index);
+        return;
+      }
       if (!nativeAudioTracks[index]) return;
       for (const [i, track] of nativeAudioTracks.entries()) track.enabled = i === index;
       audioIndex = index;
@@ -106,6 +139,107 @@
     } finally {
       if (engine === formatEngine) audioSwitching = false;
     }
+  }
+  async function switchStreamAudio(index: number, seekTime?: number, nativeFailed = false) {
+    const target = video;
+    const track = containerAudio[index];
+    if (!target || !track || audioSwitching || phase !== 'ready') return;
+    if (typeof MediaSource === 'undefined') {
+      audioStatus = 'This browser cannot switch the embedded audio in this file.';
+      return;
+    }
+    const time = seekTime ?? resume ?? target.currentTime;
+    const shouldPlay =
+      resume === null &&
+      (seekTime !== undefined || target.readyState === 0 ? !userPaused : !target.paused);
+    const previous = remuxRequest;
+    const request = new AbortController();
+    remuxRequest = request;
+    remuxPrevious = previous;
+    const url = source;
+    audioSwitching = true;
+    audioStatus = 'Switching audio…';
+    let attached = false;
+    let ready = false;
+    const failure = () => {
+      if (request.signal.aborted || remuxRequest !== request || disposed) return;
+      request.abort();
+      if (ready) {
+        remuxRequest = null;
+        audioStatus = 'Waiting for more video data…';
+        buffering();
+        return;
+      }
+      remuxRequest = previous && !attached ? previous : null;
+      remuxPrevious = null;
+      audioSwitching = false;
+      audioStatus =
+        'Could not switch audio tracks. Try again when more of the file has downloaded.';
+      if (nativeFailed) {
+        remuxed = false;
+        pendingSeek = time;
+        userPaused = !shouldPlay;
+        if (canEnhanceFormats() && !formatAttempted) void enhanceFormat();
+        else {
+          phase = 'error';
+          message =
+            'This browser could not play the recording. Wait for more data or try another browser.';
+          stop();
+          controller.abort();
+        }
+        return;
+      }
+      if (!attached) return;
+      remuxed = false;
+      const preferred = containerAudio.findIndex((item) => item.preferred);
+      audioIndex = Math.max(0, preferred);
+      pendingSeek = time;
+      restorePause = !shouldPlay;
+      target.src = url;
+    };
+    const timeout = setTimeout(failure, 45000);
+    try {
+      const { remuxAudio } = await import('../lib/audio-remux');
+      if (request.signal.aborted) return;
+      await remuxAudio(
+        target,
+        url,
+        track.number,
+        time,
+        !complete,
+        request.signal,
+        () => {
+          previous?.abort();
+          remuxPrevious = null;
+          attached = true;
+          remuxed = true;
+          target.pause();
+        },
+        () => {
+          if (request.signal.aborted) return;
+          clearTimeout(timeout);
+          ready = true;
+          audioIndex = index;
+          audioSwitching = false;
+          audioStatus = '';
+          target.playbackRate = rate;
+          if (shouldPlay) void play();
+        },
+      );
+      if (!ready) failure();
+    } catch {
+      failure();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  function seekRemux() {
+    if (!remuxed || !video || audioSwitching) return;
+    const time = video.currentTime;
+    for (let i = 0; i < video.buffered.length; i++) {
+      if (time >= video.buffered.start(i) - 0.05 && time <= video.buffered.end(i)) return;
+    }
+    void switchStreamAudio(audioIndex, time);
   }
   async function enhanceFormat() {
     if (!video || formatAttempted || !canEnhanceFormats() || phase !== 'ready') return false;
@@ -259,6 +393,10 @@
       controller.abort();
       return;
     }
+    if (remuxed && audioIndex >= 0) {
+      void switchStreamAudio(audioIndex, at);
+      return;
+    }
     void watch(selected, resumePlayback ? at : undefined, true);
   }
   function buffering() {
@@ -272,6 +410,7 @@
       if (
         !video ||
         enhancing ||
+        audioSwitching ||
         !selected ||
         userPaused ||
         resume !== null ||
@@ -325,10 +464,129 @@
   let subtitleLoading = $state<number | null>(null);
   let captionLoad: AbortController | null = null;
   let captionRetry: ReturnType<typeof setTimeout>;
+  const embeddedTracks = new Map<TextTrack, number>();
+  let embedded: {
+    request: AbortController;
+    track: TextTrack;
+    reader?: Awaited<ReturnType<typeof openEmbeddedSubtitles>>;
+    loading: boolean;
+    from: number;
+    until: number;
+  } | null = null;
+  function addContainerSubtitles(target: HTMLVideoElement, tracks: MatroskaTrack[]) {
+    if (
+      !tracks.length ||
+      embeddedTracks.size > 0 ||
+      typeof VTTCue === 'undefined' ||
+      Array.from(target.textTracks).some(
+        (track) =>
+          !externalSource(track) && (track.kind === 'subtitles' || track.kind === 'captions'),
+      )
+    )
+      return;
+    tracks
+      .filter((track) => track.type === 17)
+      .forEach((track, index) => {
+        if (track.codec !== 'S_TEXT/UTF8') return;
+        const textTrack = target.addTextTrack(
+          'subtitles',
+          mediaTrackLabel(track, `Embedded track ${index + 1}`),
+          track.language,
+        );
+        embeddedTracks.set(textTrack, index);
+      });
+  }
+  function updateEmbeddedSubtitles() {
+    const active = embedded;
+    if (!active?.reader || active.loading || !video) return;
+    const time = video.currentTime;
+    if (time >= active.from && time + 5 < active.until) return;
+    if (time < active.from) {
+      const index = embeddedTracks.get(active.track);
+      if (index !== undefined) selectEmbeddedSubtitle(active.track, index, true);
+      return;
+    }
+    clearTimeout(captionRetry);
+    active.loading = true;
+    const readFrom = Math.max(time, active.until);
+    const reader = active.reader;
+    for (const cue of Array.from(active.track.cues ?? [])) {
+      if (cue.endTime < time - 10) active.track.removeCue(cue);
+    }
+    active.from = Math.max(active.from, time - 10);
+    void reader
+      .read(readFrom, time + 18, (cue) => {
+        if (embedded !== active || active.request.signal.aborted) return;
+        // Text in the container must not be interpreted as WebVTT markup.
+        const text = cue.text
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;');
+        // Retried byte ranges may contain cues that were already displayed.
+        if (
+          !Array.from(active.track.cues ?? []).some(
+            (existing) =>
+              existing.startTime === cue.start &&
+              existing.endTime === cue.end &&
+              (existing as VTTCue).text === text,
+          )
+        )
+          active.track.addCue(new VTTCue(cue.start, cue.end, text));
+        captionStatus = '';
+      })
+      .then((until) => {
+        if (embedded !== active) return;
+        active.until = until;
+        captionStatus = '';
+        if (until < time + 5) captionRetry = setTimeout(updateEmbeddedSubtitles, 100);
+      })
+      .catch(() => {
+        if (embedded !== active) return;
+        captionStatus = 'Waiting for embedded subtitles…';
+        const index = embeddedTracks.get(active.track);
+        if (index !== undefined)
+          captionRetry = setTimeout(() => selectEmbeddedSubtitle(active.track, index, true), 2000);
+      })
+      .finally(() => {
+        active.loading = false;
+      });
+  }
+  function selectEmbeddedSubtitle(track: TextTrack, index: number, restart = false) {
+    if (embedded?.track === track && !restart) return;
+    if (restart && video && video.currentTime < (embedded?.from ?? -1))
+      for (const cue of Array.from(track.cues ?? [])) track.removeCue(cue);
+    cancelCaptionLoad();
+    const request = new AbortController();
+    const active: NonNullable<typeof embedded> = {
+      request,
+      track,
+      loading: false,
+      from: -1,
+      until: -1,
+    };
+    embedded = active;
+    captionStatus = 'Loading embedded subtitles…';
+    const url = source;
+    const open = async () => {
+      if (request.signal.aborted) return;
+      try {
+        const { openEmbeddedSubtitles } = await import('../lib/embedded-subtitles');
+        active.reader = await openEmbeddedSubtitles(url, index, !complete, request.signal);
+        if (!request.signal.aborted) updateEmbeddedSubtitles();
+      } catch {
+        if (request.signal.aborted) return;
+        captionStatus = 'Waiting for embedded subtitles…';
+        captionRetry = setTimeout(open, 2000);
+      }
+    };
+    void open();
+  }
   function cancelCaptionLoad() {
     clearTimeout(captionRetry);
     captionLoad?.abort();
     captionLoad = null;
+    embedded?.request.abort();
+    embedded = null;
     subtitleLoading = null;
     captionStatus = '';
   }
@@ -337,6 +595,7 @@
     for (const url of Object.values(subtitleURLs)) URL.revokeObjectURL(url);
     subtitleURLs = {};
     subtitleSources = [];
+    embeddedTracks.clear();
   }
   function externalSource(track?: TextTrack) {
     const node = Array.from(
@@ -347,6 +606,11 @@
       : undefined;
   }
   function ensureSubtitle(track: TextTrack) {
+    const index = embeddedTracks.get(track);
+    if (index !== undefined) {
+      selectEmbeddedSubtitle(track, index);
+      return;
+    }
     const source = externalSource(track);
     if (!source || subtitleURLs[source.index] || subtitleLoading === source.index) return;
     cancelCaptionLoad();
@@ -481,6 +745,11 @@
     const engine = formatEngine;
     formatEngine = undefined;
     if (engine) formatCleanup = engine.destroy().catch(() => {});
+    remuxRequest?.abort();
+    remuxPrevious?.abort();
+    remuxRequest = null;
+    remuxPrevious = null;
+    remuxed = false;
     if (video) {
       video.pause();
       video.removeAttribute('src');
@@ -510,10 +779,14 @@
     enhancing = false;
     formatAttempted = false;
     formatProbed = false;
+    containerProbe = undefined;
     audioNotice = '';
     audioStatus = '';
     audioSwitching = false;
     formatAudioTracks = [];
+    containerAudio = [];
+    containerTracks = [];
+    restorePause = false;
     source = '';
     priorityURL = '';
     userPaused = false;
@@ -547,6 +820,7 @@
       phase = 'ready';
       await tick();
       if (disposed || signal.aborted) return;
+      inspectContainer();
       buffering();
       if (video) video.playbackRate = rate;
       if (previousSubtitle !== undefined) {
@@ -587,25 +861,55 @@
       }
     }
   }
+  function inspectContainer() {
+    if (formatProbed) return containerProbe;
+    if (!video || !selected || !/\.(mkv|webm)$/i.test(selected.name)) return;
+    formatProbed = true;
+    const target = video;
+    const signal = controller.signal;
+    containerProbe = probeMatroskaTracks(source, signal).then((tracks) => {
+      if (signal.aborted || disposed || target !== video) return;
+      if (!tracks.length) {
+        // The streaming range may have reached an unverified piece before the track header.
+        formatProbed = false;
+        return;
+      }
+      containerTracks = tracks;
+      containerAudio = tracks.filter((track) => track.type === 2);
+      if (target.readyState > 0) {
+        addContainerSubtitles(target, tracks);
+        if (!enhanced && !remuxed && nativeAudioTracks.length <= 1)
+          audioIndex = Math.max(
+            0,
+            containerAudio.findIndex((track) => track.preferred),
+          );
+      }
+      const codec = (containerAudio.find((track) => track.preferred) ?? containerAudio[0])?.codec;
+      if (enhanced || remuxed || !needsAudioDecoder(codec, target)) return;
+      if (!canEnhanceFormats()) audioNotice = 'This browser can’t play the audio in this video.';
+      else void enhanceFormat();
+    });
+    return containerProbe;
+  }
   function metadata() {
     if (!video || enhancing) return;
     duration = video.duration;
-    if (!formatProbed && selected && /\.mkv$/i.test(selected.name)) {
-      formatProbed = true;
-      const target = video;
-      const signal = controller.signal;
-      void probeMatroskaAudio(source, signal).then(async (codec) => {
-        if (signal.aborted || disposed || target !== video || !needsAudioDecoder(codec, target))
-          return;
-        if (!canEnhanceFormats()) audioNotice = 'This browser can’t play the audio in this video.';
-        else await enhanceFormat();
-      });
-    }
+    inspectContainer();
+    addContainerSubtitles(video, containerTracks);
+    if (remuxed) return;
+    if (!enhanced && audioIndex < 0 && containerAudio.length && nativeAudioTracks.length <= 1)
+      audioIndex = Math.max(
+        0,
+        containerAudio.findIndex((track) => track.preferred),
+      );
     if (pendingSeek !== null) {
       const at = pendingSeek;
       pendingSeek = null;
       restored = true;
-      void play(at);
+      if (restorePause) {
+        restorePause = false;
+        video.currentTime = at;
+      } else void play(at);
       return;
     }
     if (restored) return;
@@ -614,7 +918,11 @@
     if (resume === null) void play();
   }
   async function mediaError() {
-    if (!video?.error || !source || phase !== 'ready') return;
+    if (!video?.error || !source || phase !== 'ready' || audioSwitching) return;
+    if (remuxed) {
+      recover(current, 'The audio stream could not be resumed. Try again shortly.', !userPaused);
+      return;
+    }
     const code = video.error.code;
     const at = pendingSeek ?? video.currentTime;
     const resumePlayback = resume === null && !userPaused;
@@ -626,6 +934,23 @@
     const status = await streamStatus(url, signal);
     if (disposed || signal.aborted || source !== url) return;
     const ready = status === 200 || status === 206;
+    if (
+      ready &&
+      !missingPieces &&
+      (code === 3 || code === 4) &&
+      typeof MediaSource !== 'undefined'
+    ) {
+      await inspectContainer();
+      if (disposed || signal.aborted || source !== url || audioSwitching || enhancing) return;
+      const defaultAudio = Math.max(
+        0,
+        containerAudio.findIndex((track) => track.preferred),
+      );
+      if (containerAudio[defaultAudio]?.codec === 'A_AAC') {
+        await switchStreamAudio(defaultAudio, at, true);
+        return;
+      }
+    }
     if (
       ready &&
       !missingPieces &&
@@ -790,56 +1115,56 @@
 </script>
 
 <svelte:window onkeydown={keys} />
-{#snippet collectionIcon()}
-  <span class="watch-collection-icon" aria-hidden="true"><FolderOpen size={20} /></span>
+{#snippet titleIcon()}
+  {#if selected}
+    <span class="watch-mark" aria-hidden="true"><Film size={28} /></span>
+  {:else}
+    <span class="watch-collection-icon" aria-hidden="true"><FolderOpen size={24} /></span>
+  {/if}
+{/snippet}
+{#snippet titleDetails()}
+  {#if selected}
+    <p>{torrent.name}</p>
+    <div class="watch-meta">
+      <span class="watch-download" class:complete>
+        {#if complete}<CheckCircle2 size={14} />Downloaded
+        {:else}<span class="watch-live-dot"></span>{percent(
+            selected.length ? downloaded / selected.length : 0,
+          )} downloaded{/if}
+      </span>
+      {#if audioNotice}<span>{audioNotice}</span>{/if}
+    </div>
+  {/if}
+{/snippet}
+{#snippet headerActions()}
+  {#if files.length > 1 && selected}
+    <div class="watch-actions">
+      {#if files[fileNumber]}
+        <button class="button secondary watch-next-button" onclick={() => watch(files[fileNumber])}>
+          <span>Next video</span><Play size={14} />
+        </button>
+      {/if}
+      <button
+        bind:this={filesButton}
+        class="button secondary watch-files-button"
+        class:active={listOpen}
+        aria-label="Show video files"
+        aria-expanded={listOpen}
+        aria-controls={listOpen ? 'watch-file-list' : undefined}
+        onclick={() => (listOpen = !listOpen)}
+        ><ListVideo size={18} /><span>Files</span><small>{fileNumber}/{files.length}</small></button
+      >
+    </div>
+  {/if}
 {/snippet}
 <Modal
-  title={selected ? 'Watch' : torrent.name}
-  titleIcon={selected ? undefined : collectionIcon}
+  title={selected ? (selected.name.split('/').at(-1) ?? selected.name) : torrent.name}
+  {titleIcon}
+  {titleDetails}
+  {headerActions}
   close={leave}
   player={selected ? 'playback' : 'chooser'}
 >
-  {#if selected}
-    <div class="watch-heading">
-      <span class="watch-mark"><Film size={21} /></span>
-      <div class="watch-title">
-        <h3>{selected.name.split('/').at(-1)}</h3>
-        <p>{torrent.name}</p>
-        <div class="watch-meta">
-          <span class="watch-download" class:complete>
-            {#if complete}<CheckCircle2 size={14} />Downloaded
-            {:else}<span class="watch-live-dot"></span>{percent(
-                selected.length ? downloaded / selected.length : 0,
-              )} downloaded{/if}
-          </span>
-          {#if audioNotice}<span>{audioNotice}</span>{/if}
-        </div>
-      </div>
-      {#if files.length > 1}
-        <div class="watch-actions">
-          {#if files[fileNumber]}
-            <button
-              class="button secondary watch-next-button"
-              onclick={() => watch(files[fileNumber])}
-            >
-              <span>Next video</span><Play size={14} />
-            </button>
-          {/if}
-          <button
-            bind:this={filesButton}
-            class="button secondary watch-files-button"
-            class:active={listOpen}
-            aria-label="Show video files"
-            aria-expanded={listOpen}
-            aria-controls={listOpen ? 'watch-file-list' : undefined}
-            onclick={() => (listOpen = !listOpen)}
-            ><ListVideo size={18} /><span>Files</span><small>{fileNumber}/{files.length}</small
-            ></button
-          >
-        </div>
-      {/if}
-    </div>
-  {/if}
   <div class="watch-content" class:watch-with-library={phase === 'ready' && listOpen}>
     {#if phase === 'loading' || phase === 'preparing'}
       <div class="watch-placeholder" role="status">
@@ -895,6 +1220,7 @@
             onplay={() => (userPaused = false)}
             ontimeupdate={() => {
               current = video?.currentTime || 0;
+              updateEmbeddedSubtitles();
               save();
             }}
             onplaying={() => {
@@ -912,10 +1238,14 @@
             }}
             oncanplay={buffered}
             onwaiting={buffering}
-            onseeking={buffering}
+            onseeking={() => {
+              seekRemux();
+              buffering();
+            }}
             onseeked={() => {
               if (video && video.readyState >= 3) buffered();
               else buffering();
+              updateEmbeddedSubtitles();
               save(true);
             }}
             onvolumechange={() => {

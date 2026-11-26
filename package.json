@@ -38,6 +38,7 @@
     "d3-scale": "^4.0.3",
     "d3-shape": "^3.2.1",
     "layerchart": "^2.10.0",
+    "mediabunny": "1.65.2",
     "svelte": "^5.57.3",
     "wicg-inert": "^3.1.3"
   },
