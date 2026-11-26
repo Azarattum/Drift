@@ -6,16 +6,18 @@
   import { isolateDialog, nativeInert } from '../lib/browser';
   let {
     title,
+    titleIcon,
     close,
     children,
     wide = false,
-    player = false,
+    player,
   }: {
     title: string;
+    titleIcon?: Snippet;
     close: () => void;
     children: Snippet;
     wide?: boolean;
-    player?: boolean;
+    player?: 'playback' | 'chooser';
   } = $props();
   let dialog: HTMLDialogElement;
   let prior: HTMLElement | null = null;
@@ -55,7 +57,8 @@
 <dialog
   bind:this={dialog!}
   class:wide
-  class:player-dialog={player}
+  class:player-dialog={!!player}
+  class:player-chooser-dialog={player === 'chooser'}
   aria-labelledby={titleId}
   in:enter|global
   out:exit|global
@@ -73,7 +76,14 @@
 >
   <div class="modal-body">
     <header class="modal-header">
-      <h2 id={titleId}>{title}</h2>
+      <h2 id={titleId}>
+        {#if titleIcon}
+          {@render titleIcon()}
+          <span>{title}</span>
+        {:else}
+          {title}
+        {/if}
+      </h2>
       <button class="icon-button" aria-label="Close dialog" onclick={close}><X size={18} /></button>
     </header>
     {@render children()}

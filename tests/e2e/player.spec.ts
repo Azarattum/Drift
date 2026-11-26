@@ -84,10 +84,11 @@ test('media error budget renews after playback makes progress', async ({ page })
 const nativeMedia = await readFile('tests/assets/playback.mp4');
 // Synthetic 1920×800 H.264 video and 48 kHz, 5.1 DTS tone generated with FFmpeg.
 const dtsMedia = await readFile('tests/assets/playback-dts.mkv');
+const audioTrackMedia = await readFile('tests/assets/playback-audio-tracks.mkv');
 async function setup(
   page: Page,
   options: {
-    multiple?: boolean;
+    videoCount?: number;
     unavailable?: boolean;
     invalidMedia?: boolean;
     partial?: boolean;
@@ -97,28 +98,28 @@ async function setup(
     priorityGate?: boolean;
     priorityWaiting?: boolean;
     dts?: boolean;
+    multipleAudio?: boolean;
   } = {},
 ) {
-  const media = options.dts ? dtsMedia : nativeMedia;
+  const matroska = options.dts || options.multipleAudio;
+  const media = options.multipleAudio ? audioTrackMedia : options.dts ? dtsMedia : nativeMedia;
   const t = torrent({
     name: 'Northern Light',
     percentDone: 1,
     status: 0,
     files: [
       {
-        name: `Northern Light/01 - The coast.${options.dts ? 'mkv' : 'mp4'}`,
+        name: `Northern Light/01 - The coast.${matroska ? 'mkv' : 'mp4'}`,
         length: media.length,
         bytesCompleted: options.partial ? Math.floor(media.length * 0.8) : media.length,
       },
-      ...(options.multiple
-        ? [
-            {
-              name: 'Northern Light/02 - Into the woods.mp4',
-              length: media.length,
-              bytesCompleted: media.length,
-            },
-          ]
-        : []),
+      ...Array.from({ length: (options.videoCount ?? 1) - 1 }, (_, index) => ({
+        name: `Northern Light/${String(index + 2).padStart(2, '0')} - ${
+          index === 0 ? 'Into the woods' : 'The long way home from the northern coast'
+        }.mp4`,
+        length: media.length,
+        bytesCompleted: media.length,
+      })),
     ],
   });
   const subtitleIndex = t.files!.length;
@@ -216,7 +217,7 @@ async function setup(
       body: media.subarray(start, end + 1),
       headers: {
         ...headers,
-        'Content-Type': options.dts ? 'video/x-matroska' : 'video/mp4',
+        'Content-Type': matroska ? 'video/x-matroska' : 'video/mp4',
         'Accept-Ranges': 'bytes',
         'Content-Length': String(end - start + 1),
         ...(range ? { 'Content-Range': `bytes ${start}-${end}/${media.length}` } : {}),
@@ -548,17 +549,86 @@ test('a stuck stream reconnects and continues at the same position without a res
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(false);
 });
 
+test('chooses a native audio track without restarting playback', async ({ page }) => {
+  await page.addInitScript(() => {
+    const tracks = Object.assign(
+      [
+        { label: 'English', language: 'en', enabled: true },
+        { label: 'Commentary', language: 'en', enabled: false },
+      ],
+      {
+        addEventListener() {},
+        removeEventListener() {},
+      },
+    );
+    Object.defineProperty(HTMLMediaElement.prototype, 'audioTracks', { get: () => tracks });
+  });
+  const { calls } = await setup(page);
+  const audio = page.getByLabel('Audio track', { exact: true });
+  await expect(audio).toHaveValue('0');
+  await audio.selectOption({ label: 'Commentary' });
+  await expect(audio).toHaveValue('1');
+  const enabled = await page.locator('video').evaluate((video) => {
+    const tracks = (video as HTMLVideoElement & { audioTracks: ArrayLike<{ enabled: boolean }> })
+      .audioTracks;
+    return Array.from(tracks, (track) => track.enabled);
+  });
+  expect(enabled).toEqual([false, true]);
+  expect(
+    calls.filter((call) => call.method === 'POST' && call.url.includes('/play/')),
+  ).toHaveLength(1);
+});
+
+test('the desktop file browser stays beside the video and marks the current file', async ({
+  page,
+}) => {
+  await setup(page, { videoCount: 2 });
+  await expect(page.getByRole('dialog', { name: 'Northern Light', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /01 - The coast/ }).click();
+  const next = page.getByRole('button', { name: 'Next video' });
+  const files = page.getByRole('button', { name: 'Show video files' });
+  await expect(next).toBeVisible();
+  await expect(files).toBeVisible();
+  const alignment = await next.evaluate((button) => {
+    const sibling = button.nextElementSibling!;
+    return button.getBoundingClientRect().top - sibling.getBoundingClientRect().top;
+  });
+  expect(alignment).toBeCloseTo(0, 0);
+  await files.click();
+  const library = page.getByRole('region', { name: 'Video files' });
+  await expect(library.getByRole('button', { name: /01 - The coast/ })).toHaveAttribute(
+    'aria-current',
+    'true',
+  );
+  const separation = await library.evaluate((section) => {
+    const player = section.previousElementSibling!.getBoundingClientRect();
+    const panel = section.getBoundingClientRect();
+    return { x: panel.left - player.right, y: panel.top - player.top };
+  });
+  expect(separation.x).toBeGreaterThanOrEqual(-1);
+  expect(separation.y).toBeCloseTo(0, 0);
+  await next.click();
+  await expect(page.locator('.watch-heading h3')).toHaveText('02 - Into the woods.mp4');
+  await expect(next).toHaveCount(0);
+});
+
 test('multiple files, matching mobile theme, file switching and touch targets', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 375, height: 667 });
-  await setup(page, { multiple: true });
-  await expect(page.getByRole('region', { name: 'Video files' })).toBeVisible();
+  await setup(page, { videoCount: 10 });
+  const chooser = page.getByRole('dialog', { name: 'Northern Light', exact: true });
+  const list = chooser.getByRole('region', { name: 'Video files' }).getByRole('list');
+  await expect(list.getByRole('listitem')).toHaveCount(10);
+  expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  expect((await list.getByRole('button').first().boundingBox())!.height).toBeGreaterThanOrEqual(44);
   await page.getByRole('button', { name: /01 - The coast/ }).click();
   await expect(page.locator('.drift-player')).toBeVisible();
   await page.getByRole('button', { name: 'Show video files' }).click();
-  await page.getByRole('button', { name: /02 - Into the woods/ }).click();
-  await expect(page.locator('.watch-heading h3')).toHaveText('02 - Into the woods.mp4');
+  await page.getByRole('button', { name: /10 - The long way home/ }).click();
+  await expect(page.locator('.watch-heading h3')).toHaveText(
+    '10 - The long way home from the northern coast.mp4',
+  );
   expect(
     await page.locator('.player-dialog').evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
   ).toBe(true);
@@ -659,19 +729,17 @@ test('player fits available dialog height without scrolling at short viewport si
   }
 });
 
-test('mobile player keeps download status on one line and centered beside file info', async ({
-  page,
-}) => {
+test('mobile player aligns download status under the title without wrapping', async ({ page }) => {
   await setup(page);
   await expect(page.locator('.drift-player video')).toBeVisible();
   for (const width of [320, 360, 390, 430]) {
     await page.setViewportSize({ width, height: 760 });
-    const status = await page.locator('.watch-header-status').boundingBox();
-    const info = await page.locator('.watch-heading > div').boundingBox();
+    const title = await page.locator('.watch-title h3').boundingBox();
     const download = await page.locator('.watch-download').boundingBox();
     expect(download!.height).toBeLessThanOrEqual(21);
-    expect(Math.abs(status!.y + status!.height / 2 - info!.y - info!.height / 2)).toBeLessThan(2);
-    expect(status!.x + status!.width).toBeLessThanOrEqual(width - 16);
+    expect(download!.x).toBeCloseTo(title!.x, 0);
+    expect(download!.y).toBeGreaterThan(title!.y + title!.height);
+    expect(download!.x + download!.width).toBeLessThanOrEqual(width - 16);
   }
 });
 
@@ -715,6 +783,27 @@ test('native playback never downloads the optional format engine or WASM', async
   expect(requests.filter((url) => /format-engine|format-codecs|avbridge|\.wasm/.test(url))).toEqual(
     [],
   );
+});
+
+test('the format engine switches tracks during Matroska playback', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium', 'The optional decoder requires WebCodecs VideoFrame.');
+  await setup(page, { multipleAudio: true });
+  const audio = page.getByLabel('Audio track', { exact: true });
+  await expect(audio).toHaveValue('0', { timeout: 30000 });
+  await expect(audio.locator('option')).toHaveCount(2);
+  const video = page.locator('video');
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeGreaterThan(0.2);
+  const before = await video.evaluate((v: HTMLVideoElement) => v.currentTime);
+  await audio.selectOption('1');
+  await expect(audio).toHaveValue('1');
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeGreaterThan(before + 0.2);
 });
 
 test('DTS audio uses the lazy decoder with existing play, volume, seek and cleanup controls', async ({

@@ -1,4 +1,4 @@
-import { createPlayer, type UnifiedPlayer } from 'avbridge';
+import { type AudioTrackInfo, createPlayer, type UnifiedPlayer } from 'avbridge';
 
 const patched = [
   'play',
@@ -17,7 +17,11 @@ const patched = [
   'videoHeight',
 ] as const;
 
-export type FormatEngine = { destroy: () => Promise<void> };
+export type FormatEngine = {
+  audioTracks: AudioTrackInfo[];
+  setAudioTrack: (id: number) => Promise<void>;
+  destroy: () => Promise<void>;
+};
 // avbridge caches a WASM runtime. Its previous input must be detached before reuse,
 // including when a new modal opens while the old modal is still cleaning up.
 let previousCleanup: Promise<void> = Promise.resolve();
@@ -227,7 +231,12 @@ export async function attachFormatEngine(
     player.on('error', () => {
       if (!disposed && !signal.aborted) onError();
     });
-    return { destroy };
+    let audioTracks: AudioTrackInfo[] = [];
+    const unsubscribe = active.on('tracks', (tracks) => {
+      audioTracks = tracks.audio;
+    });
+    unsubscribe();
+    return { audioTracks, setAudioTrack: (id) => active.setAudioTrack(id), destroy };
   } catch (error) {
     const failed = (error as { player?: UnifiedPlayer })?.player;
     if (!player && failed) player = failed;

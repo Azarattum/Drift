@@ -5,6 +5,19 @@ Release tags and web/native package versions use the same semantic version.
 
 ## [Unreleased]
 
+### Added
+
+- Choose audio tracks during playback when the browser or Drift's decoder exposes multiple tracks.
+
+### Changed
+
+- Align the Next video and Files actions. Open the file list beside the player on desktop and above it on mobile.
+- Use the torrent name as the video chooser title and distinguish the collection from individual videos with folder and film icons.
+
+### Known limitations
+
+- The fallback decoder can ignore an audio track selection on some Matroska files. On plain HTTP, audio track selection depends on browser support.
+
 ## [0.1.3] - 2026-11-13
 
 ### Fixed

@@ -7,6 +7,8 @@
     Captions,
     ChevronDown,
     Film,
+    FolderOpen,
+    Languages,
     ListVideo,
     LoaderCircle,
     Maximize,
@@ -56,6 +58,55 @@
   let formatEngine: FormatEngine | undefined;
   let formatCleanup: Promise<void> = Promise.resolve();
   let audioNotice = $state('');
+  type NativeAudioTrack = { label: string; language: string; enabled: boolean };
+  type NativeAudioTracks = EventTarget & ArrayLike<NativeAudioTrack>;
+  let nativeAudioTracks = $state.raw<NativeAudioTrack[]>([]);
+  let formatAudioTracks = $state.raw<FormatEngine['audioTracks']>([]);
+  let audioIndex = $state(-1);
+  let audioSwitching = $state(false);
+  let audioStatus = $state('');
+  let audioOptions = $derived(
+    (enhanced ? formatAudioTracks : nativeAudioTracks).map(
+      (track, i) => ('label' in track && track.label) || track.language || `Track ${i + 1}`,
+    ),
+  );
+  $effect(() => {
+    const tracks = (video as (HTMLVideoElement & { audioTracks?: NativeAudioTracks }) | undefined)
+      ?.audioTracks;
+    function update() {
+      nativeAudioTracks = Array.from(tracks ?? []);
+      audioIndex = nativeAudioTracks.findIndex((track) => track.enabled);
+    }
+    if (enhanced) return;
+    untrack(update);
+    for (const event of ['addtrack', 'removetrack', 'change'])
+      tracks?.addEventListener(event, update);
+    return () => {
+      for (const event of ['addtrack', 'removetrack', 'change'])
+        tracks?.removeEventListener(event, update);
+    };
+  });
+  async function setAudio(index: number) {
+    audioStatus = '';
+    const engine = formatEngine;
+    if (!engine) {
+      if (!nativeAudioTracks[index]) return;
+      for (const [i, track] of nativeAudioTracks.entries()) track.enabled = i === index;
+      audioIndex = index;
+      return;
+    }
+    const track = formatAudioTracks[index];
+    if (!track || audioSwitching) return;
+    audioSwitching = true;
+    try {
+      await engine.setAudioTrack(track.id);
+      if (engine === formatEngine) audioIndex = index;
+    } catch {
+      if (engine === formatEngine) audioStatus = 'Could not switch audio tracks.';
+    } finally {
+      if (engine === formatEngine) audioSwitching = false;
+    }
+  }
   async function enhanceFormat() {
     if (!video || formatAttempted || !canEnhanceFormats() || phase !== 'ready') return false;
     formatAttempted = true;
@@ -93,6 +144,8 @@
       }
       formatEngine = engine;
       enhanced = true;
+      formatAudioTracks = engine.audioTracks;
+      audioIndex = formatAudioTracks.length ? 0 : -1;
       enhancing = false;
       audioNotice = '';
       if (at > 0) pendingSeek = at;
@@ -250,6 +303,17 @@
   let resume = $state<number | null>(null);
   let pendingSeek: number | null = null;
   let listOpen = $state(false);
+  let fileList = $state<HTMLUListElement>();
+  let filesButton = $state<HTMLButtonElement>();
+  $effect(() => {
+    if (!fileList || !listOpen) return;
+    const active = fileList.querySelector('[aria-current="true"]');
+    if (!active) return;
+    const row = active.getBoundingClientRect();
+    const list = fileList.getBoundingClientRect();
+    if (row.top < list.top) fileList.scrollTop += row.top - list.top;
+    else if (row.bottom > list.bottom) fileList.scrollTop += row.bottom - list.bottom;
+  });
   let rate = $state(1);
   let recoverySubtitle: number | undefined;
   let captions = $state<TextTrack[]>([]);
@@ -447,6 +511,9 @@
     formatAttempted = false;
     formatProbed = false;
     audioNotice = '';
+    audioStatus = '';
+    audioSwitching = false;
+    formatAudioTracks = [];
     source = '';
     priorityURL = '';
     userPaused = false;
@@ -645,7 +712,12 @@
         if (!media) return;
         const style = getComputedStyle(dialog);
         const maximum = parseFloat(style.maxHeight);
-        const other = body.getBoundingClientRect().height - media.getBoundingClientRect().height;
+        const player = node.closest('video-player')!;
+        const other =
+          player.getBoundingClientRect().top -
+          body.getBoundingClientRect().top +
+          player.getBoundingClientRect().height -
+          media.getBoundingClientRect().height;
         const border = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
         if (Number.isFinite(maximum))
           node.style.setProperty(
@@ -718,345 +790,402 @@
 </script>
 
 <svelte:window onkeydown={keys} />
-<Modal title="Watch" close={leave} player>
-  <div class="watch-heading">
-    <span class="watch-mark"><Film size={21} /></span>
-    <div>
-      <h3>{selected ? selected.name.split('/').at(-1) : torrent.name}</h3>
-      <p>
-        {audioNotice ||
-          (selected
-            ? torrent.name
-            : `${files.length || 'Finding'} video${files.length === 1 ? '' : 's'} · Choose a file to begin`)}
-      </p>
-    </div>
-    {#if selected}<span class="watch-header-status">
-        <span class="watch-download" class:complete
-          >{#if complete}<CheckCircle2 size={15} /><span>Downloaded</span>{:else}<span
-              class="watch-live-dot"
-            ></span><span
-              >{percent(selected?.length ? downloaded / selected.length : 0)} downloaded</span
-            >{/if}</span
-        >{#if files[fileNumber]}<button class="text-button" onclick={() => watch(files[fileNumber])}
-            >Next video<Play size={13} /></button
-          >{/if}
-      </span>{/if}
-    {#if files.length > 1 && selected}<button
-        class="button secondary watch-files-button"
-        aria-label="Show video files"
-        aria-expanded={listOpen}
-        onclick={() => (listOpen = !listOpen)}
-        ><ListVideo size={18} /><span>Files</span><small>{fileNumber}/{files.length}</small></button
-      >{/if}
-  </div>
-  {#if phase === 'loading' || phase === 'preparing'}
-    <div class="watch-placeholder" role="status">
-      <LoaderCircle class="watch-spinner" size={30} />
-      <h3>{phase === 'loading' ? 'Finding your videos' : 'Preparing your video'}</h3>
-      <p>
-        {phase === 'loading'
-          ? 'Getting the file list…'
-          : 'Enabling sequential download and connecting to your device…'}
-      </p>
-    </div>
-  {:else if phase === 'error'}
-    <div class="watch-placeholder watch-error" role="alert">
-      <Film size={32} />
-      <h3>{selected ? 'Unable to play this video' : 'Nothing to play yet'}</h3>
-      <p>{message}</p>
-      <div class="watch-error-actions">
-        {#if selected}<button class="button primary" onclick={() => watch(selected!)}
-            ><RotateCcw size={16} />Try again</button
-          >{/if}{#if files.length > 1}<button
-            class="button secondary"
-            onclick={() => {
-              stop();
-              selected = null;
-              phase = 'choose';
-            }}><ListVideo size={16} />Choose another file</button
-          >{/if}
+{#snippet collectionIcon()}
+  <span class="watch-collection-icon" aria-hidden="true"><FolderOpen size={20} /></span>
+{/snippet}
+<Modal
+  title={selected ? 'Watch' : torrent.name}
+  titleIcon={selected ? undefined : collectionIcon}
+  close={leave}
+  player={selected ? 'playback' : 'chooser'}
+>
+  {#if selected}
+    <div class="watch-heading">
+      <span class="watch-mark"><Film size={21} /></span>
+      <div class="watch-title">
+        <h3>{selected.name.split('/').at(-1)}</h3>
+        <p>{torrent.name}</p>
+        <div class="watch-meta">
+          <span class="watch-download" class:complete>
+            {#if complete}<CheckCircle2 size={14} />Downloaded
+            {:else}<span class="watch-live-dot"></span>{percent(
+                selected.length ? downloaded / selected.length : 0,
+              )} downloaded{/if}
+          </span>
+          {#if audioNotice}<span>{audioNotice}</span>{/if}
+        </div>
       </div>
-    </div>
-  {:else if phase === 'ready'}
-    <video-player class="drift-player">
-      <media-container
-        bind:this={canvas}
-        use:fitPlayer
-        class="watch-canvas"
-        data-format-enhanced={enhanced || undefined}
-        class:watch-fullscreen={fullscreen}
-        class:watch-keyboard={keyboardControls}
-        class:watch-resuming={resume !== null}
-        onpointerdown={() => (keyboardControls = false)}
-        role="group"
-        aria-label="Video player"
-      >
-        <!-- Captions are exposed when the media provides text tracks. RPC text is never HTML. -->
-        <!-- svelte-ignore a11y_media_has_caption -->
-        <video
-          bind:this={video}
-          src={source}
-          playsinline
-          crossorigin="use-credentials"
-          preload="auto"
-          onloadedmetadata={metadata}
-          onplay={() => (userPaused = false)}
-          ontimeupdate={() => {
-            current = video?.currentTime || 0;
-            save();
-          }}
-          onplaying={() => {
-            userPaused = false;
-            paused = false;
-            buffered();
-            hasPlayed = true;
-          }}
-          onpause={() => {
-            if (phase === 'ready' && video && video.readyState >= 1 && !video.error)
-              userPaused = true;
-            paused = true;
-            buffered();
-            save(true);
-          }}
-          oncanplay={buffered}
-          onwaiting={buffering}
-          onseeking={buffering}
-          onseeked={() => {
-            if (video && video.readyState >= 3) buffered();
-            else buffering();
-            save(true);
-          }}
-          onvolumechange={() => {
-            if (!video) return;
-            muted = video.muted || video.volume === 0;
-            savePlaybackAudio(video.volume, video.muted);
-          }}
-          onended={() => {
-            save(true);
-            paused = true;
-          }}
-          onerror={mediaError}
-        >
-          {#each subtitleSources as subtitle (subtitle.index)}
-            <track
-              kind="subtitles"
-              data-subtitle-index={subtitle.index}
-              src={subtitleURLs[subtitle.index]}
-              srclang={subtitle.language}
-              label={subtitleLabel(subtitle)}
-              onload={(e) => {
-                const track = (e.currentTarget as HTMLTrackElement).track;
-                track.mode = captions[captionIndex] === track ? 'showing' : 'disabled';
-              }}
-              onerror={(e) => {
-                if (
-                  subtitleURLs[subtitle.index] &&
-                  captions[captionIndex] === (e.currentTarget as HTMLTrackElement).track
-                )
-                  captionStatus = 'These subtitles could not be displayed. Choose another track.';
-              }}
-            />
-          {/each}
-        </video>
-        <media-gesture type="tap" pointer="mouse" action="togglePaused" disabled={resume !== null}
-        ></media-gesture>
-        <media-gesture
-          type="doubletap"
-          pointer="mouse"
-          action="toggleFullscreen"
-          disabled={resume !== null}
-        ></media-gesture>
-        {#if resume !== null}<div class="watch-overlay watch-resume">
-            <span class="watch-overlay-icon"><RotateCcw size={26} /></span>
-            <h3>Pick up where you left off</h3>
-            <p>Continue from {clock(resume)}</p>
-            <div>
-              <button class="button primary" onclick={() => play(resume!)}
-                ><Play size={17} fill="currentColor" />Resume from {clock(resume)}</button
-              ><button class="button watch-start-over" onclick={() => play(0)}>Start over</button>
-            </div>
-          </div>
-        {:else if paused && !waiting && !enhancing && duration > 0}<button
-            class="watch-big-play"
-            aria-label={current >= duration && duration > 0 ? 'Replay video' : 'Play video'}
-            onclick={() => play()}><Play size={30} fill="currentColor" /></button
-          >{/if}
-        {#if (waiting || enhancing || duration <= 0) && resume === null}<div
-            class="watch-buffering"
-            role="status"
+      {#if files.length > 1}
+        <div class="watch-actions">
+          {#if files[fileNumber]}
+            <button
+              class="button secondary watch-next-button"
+              onclick={() => watch(files[fileNumber])}
+            >
+              <span>Next video</span><Play size={14} />
+            </button>
+          {/if}
+          <button
+            bind:this={filesButton}
+            class="button secondary watch-files-button"
+            class:active={listOpen}
+            aria-label="Show video files"
+            aria-expanded={listOpen}
+            aria-controls={listOpen ? 'watch-file-list' : undefined}
+            onclick={() => (listOpen = !listOpen)}
+            ><ListVideo size={18} /><span>Files</span><small>{fileNumber}/{files.length}</small
+            ></button
           >
-            <LoaderCircle class="watch-spinner" size={25} /><span
-              >{enhancing
-                ? 'Preparing playback…'
-                : waitingForPieces
-                  ? 'Waiting for download…'
-                  : duration <= 0
-                    ? 'Loading video…'
-                    : 'Buffering…'}</span
-            >
-          </div>{/if}
-        <media-controls
-          class="watch-controls"
-          inert={enhancing}
-          class:watch-controls-blocked={resume !== null}
-          visibility={fullscreen && !captionMenu ? 'auto' : 'always'}
+        </div>
+      {/if}
+    </div>
+  {/if}
+  <div class="watch-content" class:watch-with-library={phase === 'ready' && listOpen}>
+    {#if phase === 'loading' || phase === 'preparing'}
+      <div class="watch-placeholder" role="status">
+        <LoaderCircle class="watch-spinner" size={30} />
+        <h3>{phase === 'loading' ? 'Finding your videos' : 'Preparing your video'}</h3>
+        <p>
+          {phase === 'loading'
+            ? 'Getting the file list…'
+            : 'Enabling sequential download and connecting to your device…'}
+        </p>
+      </div>
+    {:else if phase === 'error'}
+      <div class="watch-placeholder watch-error" role="alert">
+        <Film size={32} />
+        <h3>{selected ? 'Unable to play this video' : 'Nothing to play yet'}</h3>
+        <p>{message}</p>
+        <div class="watch-error-actions">
+          {#if selected}<button class="button primary" onclick={() => watch(selected!)}
+              ><RotateCcw size={16} />Try again</button
+            >{/if}{#if files.length > 1}<button
+              class="button secondary"
+              onclick={() => {
+                stop();
+                selected = null;
+                phase = 'choose';
+              }}><ListVideo size={16} />Choose another file</button
+            >{/if}
+        </div>
+      </div>
+    {:else if phase === 'ready'}
+      <video-player class="drift-player">
+        <media-container
+          bind:this={canvas}
+          use:fitPlayer
+          class="watch-canvas"
+          data-format-enhanced={enhanced || undefined}
+          class:watch-fullscreen={fullscreen}
+          class:watch-keyboard={keyboardControls}
+          class:watch-resuming={resume !== null}
+          onpointerdown={() => (keyboardControls = false)}
+          role="group"
+          aria-label="Video player"
         >
-          <media-controls-content>
-            <media-time-slider aria-label="Seek video" class="watch-timeline"
-              ><media-slider-track
-                ><media-slider-buffer></media-slider-buffer><media-slider-fill
-                ></media-slider-fill></media-slider-track
-              ><media-slider-thumb></media-slider-thumb></media-time-slider
+          <!-- Captions are exposed when the media provides text tracks. RPC text is never HTML. -->
+          <!-- svelte-ignore a11y_media_has_caption -->
+          <video
+            bind:this={video}
+            src={source}
+            playsinline
+            crossorigin="use-credentials"
+            preload="auto"
+            onloadedmetadata={metadata}
+            onplay={() => (userPaused = false)}
+            ontimeupdate={() => {
+              current = video?.currentTime || 0;
+              save();
+            }}
+            onplaying={() => {
+              userPaused = false;
+              paused = false;
+              buffered();
+              hasPlayed = true;
+            }}
+            onpause={() => {
+              if (phase === 'ready' && video && video.readyState >= 1 && !video.error)
+                userPaused = true;
+              paused = true;
+              buffered();
+              save(true);
+            }}
+            oncanplay={buffered}
+            onwaiting={buffering}
+            onseeking={buffering}
+            onseeked={() => {
+              if (video && video.readyState >= 3) buffered();
+              else buffering();
+              save(true);
+            }}
+            onvolumechange={() => {
+              if (!video) return;
+              muted = video.muted || video.volume === 0;
+              savePlaybackAudio(video.volume, video.muted);
+            }}
+            onended={() => {
+              save(true);
+              paused = true;
+            }}
+            onerror={mediaError}
+          >
+            {#each subtitleSources as subtitle (subtitle.index)}
+              <track
+                kind="subtitles"
+                data-subtitle-index={subtitle.index}
+                src={subtitleURLs[subtitle.index]}
+                srclang={subtitle.language}
+                label={subtitleLabel(subtitle)}
+                onload={(e) => {
+                  const track = (e.currentTarget as HTMLTrackElement).track;
+                  track.mode = captions[captionIndex] === track ? 'showing' : 'disabled';
+                }}
+                onerror={(e) => {
+                  if (
+                    subtitleURLs[subtitle.index] &&
+                    captions[captionIndex] === (e.currentTarget as HTMLTrackElement).track
+                  )
+                    captionStatus = 'These subtitles could not be displayed. Choose another track.';
+                }}
+              />
+            {/each}
+          </video>
+          <media-gesture type="tap" pointer="mouse" action="togglePaused" disabled={resume !== null}
+          ></media-gesture>
+          <media-gesture
+            type="doubletap"
+            pointer="mouse"
+            action="toggleFullscreen"
+            disabled={resume !== null}
+          ></media-gesture>
+          {#if resume !== null}<div class="watch-overlay watch-resume">
+              <span class="watch-overlay-icon"><RotateCcw size={26} /></span>
+              <h3>Pick up where you left off</h3>
+              <p>Continue from {clock(resume)}</p>
+              <div>
+                <button class="button primary" onclick={() => play(resume!)}
+                  ><Play size={17} fill="currentColor" />Resume from {clock(resume)}</button
+                ><button class="button watch-start-over" onclick={() => play(0)}>Start over</button>
+              </div>
+            </div>
+          {:else if paused && !waiting && !enhancing && duration > 0}<button
+              class="watch-big-play"
+              aria-label={current >= duration && duration > 0 ? 'Replay video' : 'Play video'}
+              onclick={() => play()}><Play size={30} fill="currentColor" /></button
+            >{/if}
+          {#if (waiting || enhancing || duration <= 0) && resume === null}<div
+              class="watch-buffering"
+              role="status"
             >
-            <media-controls-group class="watch-control-row" aria-label="Playback controls">
-              <media-play-button class="watch-control" aria-label={paused ? 'Play' : 'Pause'}
-                ><span class="when-paused"><Play size={20} fill="currentColor" /></span><span
-                  class="when-playing"><Pause size={20} fill="currentColor" /></span
-                ></media-play-button
+              <LoaderCircle class="watch-spinner" size={25} /><span
+                >{enhancing
+                  ? 'Preparing playback…'
+                  : waitingForPieces
+                    ? 'Waiting for download…'
+                    : duration <= 0
+                      ? 'Loading video…'
+                      : 'Buffering…'}</span
               >
-              <media-seek-button
-                class="watch-control watch-skip"
-                seconds={-10}
-                aria-label="Back 10 seconds"
-                ><RotateCcw size={19} /><small>10</small></media-seek-button
+            </div>{/if}
+          <media-controls
+            class="watch-controls"
+            inert={enhancing}
+            class:watch-controls-blocked={resume !== null}
+            visibility={fullscreen && !captionMenu ? 'auto' : 'always'}
+          >
+            <media-controls-content>
+              <media-time-slider aria-label="Seek video" class="watch-timeline"
+                ><media-slider-track
+                  ><media-slider-buffer></media-slider-buffer><media-slider-fill
+                  ></media-slider-fill></media-slider-track
+                ><media-slider-thumb></media-slider-thumb></media-time-slider
               >
-              <media-seek-button
-                class="watch-control watch-skip"
-                seconds={10}
-                aria-label="Forward 10 seconds"
-                ><RotateCw size={19} /><small>10</small></media-seek-button
-              >
-              <span class="watch-time"
-                ><media-time type="current"></media-time><span>/</span><media-time type="duration"
-                ></media-time></span
-              >
-              <span class="watch-control-spacer"></span>
-              <media-mute-button class="watch-control" aria-label={muted ? 'Unmute' : 'Mute'}
-                ><span class="when-unmuted"><Volume2 size={20} /></span><span class="when-muted"
-                  ><VolumeX size={20} /></span
-                ></media-mute-button
-              >
-              <media-volume-slider class="watch-volume" aria-label="Volume"
-                ><media-slider-track><media-slider-fill></media-slider-fill></media-slider-track
-                ><media-slider-thumb></media-slider-thumb></media-volume-slider
-              >
-              <label class="watch-rate"
-                ><span class="sr-only">Playback speed</span><select
-                  aria-label="Playback speed"
-                  bind:value={rate}
-                  onchange={() => {
-                    if (video) video.playbackRate = rate;
-                  }}
-                  >{#each [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as r}<option value={r}>{r}×</option
-                    >{/each}</select
-                ><ChevronDown size={12} /></label
-              >
-              {#if captions.length}<div class="watch-caption-picker">
-                  <button
-                    class="watch-control"
-                    aria-label="Subtitles"
-                    aria-busy={subtitleLoading !== null}
-                    aria-expanded={captionMenu}
-                    aria-haspopup="menu"
-                    onclick={toggleCaptions}><Captions size={20} /></button
-                  >{#if captionMenu}<div
-                      class="watch-caption-menu"
-                      role="menu"
-                      aria-label="Subtitles"
-                      tabindex="-1"
-                      onkeydown={(e) => {
-                        if (e.key === 'Escape') {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          captionMenu = false;
-                          canvas?.querySelector<HTMLElement>('[aria-label="Subtitles"]')?.focus();
-                        }
-                        if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const buttons = Array.from(
-                            e.currentTarget.querySelectorAll<HTMLButtonElement>('button'),
-                          );
-                          const index = buttons.indexOf(
-                            document.activeElement as HTMLButtonElement,
-                          );
-                          buttons[
-                            e.key === 'Home'
-                              ? 0
-                              : e.key === 'End'
-                                ? buttons.length - 1
-                                : (index + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) %
-                                  buttons.length
-                          ]?.focus();
-                        }
+              <media-controls-group class="watch-control-row" aria-label="Playback controls">
+                <media-play-button class="watch-control" aria-label={paused ? 'Play' : 'Pause'}
+                  ><span class="when-paused"><Play size={20} fill="currentColor" /></span><span
+                    class="when-playing"><Pause size={20} fill="currentColor" /></span
+                  ></media-play-button
+                >
+                <media-seek-button
+                  class="watch-control watch-skip"
+                  seconds={-10}
+                  aria-label="Back 10 seconds"
+                  ><RotateCcw size={19} /><small>10</small></media-seek-button
+                >
+                <media-seek-button
+                  class="watch-control watch-skip"
+                  seconds={10}
+                  aria-label="Forward 10 seconds"
+                  ><RotateCw size={19} /><small>10</small></media-seek-button
+                >
+                <span class="watch-time"
+                  ><media-time type="current"></media-time><span>/</span><media-time type="duration"
+                  ></media-time></span
+                >
+                <span class="watch-control-spacer"></span>
+                <media-mute-button class="watch-control" aria-label={muted ? 'Unmute' : 'Mute'}
+                  ><span class="when-unmuted"><Volume2 size={20} /></span><span class="when-muted"
+                    ><VolumeX size={20} /></span
+                  ></media-mute-button
+                >
+                <media-volume-slider class="watch-volume" aria-label="Volume"
+                  ><media-slider-track><media-slider-fill></media-slider-fill></media-slider-track
+                  ><media-slider-thumb></media-slider-thumb></media-volume-slider
+                >
+                <label class="watch-rate"
+                  ><span class="sr-only">Playback speed</span><select
+                    aria-label="Playback speed"
+                    bind:value={rate}
+                    onchange={() => {
+                      if (video) video.playbackRate = rate;
+                    }}
+                    >{#each [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as r}<option value={r}>{r}×</option
+                      >{/each}</select
+                  ><ChevronDown size={12} /></label
+                >
+                {#if audioOptions.length > 1 && !enhancing}
+                  <label class="watch-audio">
+                    <Languages size={19} />
+                    <span>Audio</span><ChevronDown size={12} />
+                    <select
+                      aria-label="Audio track"
+                      value={audioIndex}
+                      disabled={audioSwitching}
+                      onchange={(event) => {
+                        const select = event.currentTarget;
+                        const index = Number(select.value);
+                        select.value = String(audioIndex);
+                        void setAudio(index);
                       }}
                     >
-                      <button
-                        role="menuitemradio"
-                        aria-checked={captionIndex === -1}
-                        onclick={() => setCaption(-1)}
-                        >Off{#if captionIndex === -1}<Check size={14} />{/if}</button
-                      >{#each captions as track, i}<button
+                      {#if audioIndex < 0}<option value={-1} disabled>Choose a track</option>{/if}
+                      {#each audioOptions as label, i}
+                        <option value={i}>{label}</option>
+                      {/each}
+                    </select>
+                  </label>
+                {/if}
+                {#if captions.length}<div class="watch-caption-picker">
+                    <button
+                      class="watch-control"
+                      aria-label="Subtitles"
+                      aria-busy={subtitleLoading !== null}
+                      aria-expanded={captionMenu}
+                      aria-haspopup="menu"
+                      onclick={toggleCaptions}><Captions size={20} /></button
+                    >{#if captionMenu}<div
+                        class="watch-caption-menu"
+                        role="menu"
+                        aria-label="Subtitles"
+                        tabindex="-1"
+                        onkeydown={(e) => {
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            captionMenu = false;
+                            canvas?.querySelector<HTMLElement>('[aria-label="Subtitles"]')?.focus();
+                          }
+                          if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const buttons = Array.from(
+                              e.currentTarget.querySelectorAll<HTMLButtonElement>('button'),
+                            );
+                            const index = buttons.indexOf(
+                              document.activeElement as HTMLButtonElement,
+                            );
+                            buttons[
+                              e.key === 'Home'
+                                ? 0
+                                : e.key === 'End'
+                                  ? buttons.length - 1
+                                  : (index + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) %
+                                    buttons.length
+                            ]?.focus();
+                          }
+                        }}
+                      >
+                        <button
                           role="menuitemradio"
-                          aria-checked={captionIndex === i}
-                          onclick={() => setCaption(i)}
-                          >{track.label ||
-                            track.language ||
-                            `Track ${i + 1}`}{#if captionIndex === i}<Check
-                              size={14}
-                            />{/if}</button
-                        >{/each}
-                    </div>{/if}
-                </div>{/if}
-              {#if !enhanced}<media-airplay-button
-                  class="watch-control watch-airplay"
-                  aria-label="AirPlay"><Airplay size={20} /></media-airplay-button
+                          aria-checked={captionIndex === -1}
+                          onclick={() => setCaption(-1)}
+                          >Off{#if captionIndex === -1}<Check size={14} />{/if}</button
+                        >{#each captions as track, i}<button
+                            role="menuitemradio"
+                            aria-checked={captionIndex === i}
+                            onclick={() => setCaption(i)}
+                            >{track.label ||
+                              track.language ||
+                              `Track ${i + 1}`}{#if captionIndex === i}<Check
+                                size={14}
+                              />{/if}</button
+                          >{/each}
+                      </div>{/if}
+                  </div>{/if}
+                {#if !enhanced}<media-airplay-button
+                    class="watch-control watch-airplay"
+                    aria-label="AirPlay"><Airplay size={20} /></media-airplay-button
+                  >
+                  <media-pip-button class="watch-control watch-pip" aria-label="Picture in picture"
+                    ><PictureInPicture2 size={20} /></media-pip-button
+                  >{/if}
+                <media-fullscreen-button
+                  class="watch-control watch-fullscreen"
+                  aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+                  ><span class="when-windowed"><Maximize size={20} /></span><span
+                    class="when-fullscreen"><Minimize size={20} /></span
+                  ></media-fullscreen-button
                 >
-                <media-pip-button class="watch-control watch-pip" aria-label="Picture in picture"
-                  ><PictureInPicture2 size={20} /></media-pip-button
-                >{/if}
-              <media-fullscreen-button
-                class="watch-control watch-fullscreen"
-                aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-                ><span class="when-windowed"><Maximize size={20} /></span><span
-                  class="when-fullscreen"><Minimize size={20} /></span
-                ></media-fullscreen-button
+              </media-controls-group>
+            </media-controls-content>
+          </media-controls>
+          <media-status-announcer></media-status-announcer>
+          {#if captionStatus || audioStatus}<div class="watch-subtitle-status" role="status">
+              {audioStatus || captionStatus}
+            </div>{/if}
+        </media-container>
+      </video-player>
+    {/if}
+    {#if phase === 'choose' || listOpen}
+      <section id="watch-file-list" class="watch-library" aria-label="Video files">
+        <header>
+          <h3>{phase === 'choose' ? 'Choose a video' : 'Video files'}</h3>
+          <span>{files.length} files</span>
+        </header>
+        <ul class="watch-file-list" role="list" bind:this={fileList}>
+          {#each files as file (file.index)}
+            {@const position = playbackPosition(positionKey(endpoint, torrent.hashString, file))}
+            {@const active = selected?.index === file.index}
+            <li>
+              <button
+                class="watch-file"
+                class:active
+                aria-current={active ? 'true' : undefined}
+                onclick={() => {
+                  if (active) {
+                    listOpen = false;
+                    filesButton?.focus();
+                  } else void watch(file);
+                }}
               >
-            </media-controls-group>
-          </media-controls-content>
-        </media-controls>
-        <media-status-announcer></media-status-announcer>
-        {#if captionStatus}<div class="watch-subtitle-status" role="status">
-            {captionStatus}
-          </div>{/if}
-      </media-container>
-    </video-player>
-  {/if}
-  {#if phase === 'choose' || listOpen}
-    <section class="watch-library" aria-label="Video files">
-      <header>
-        <span class="eyebrow">{phase === 'choose' ? 'CHOOSE A VIDEO' : 'IN THIS TORRENT'}</span
-        ><span>{files.length} files</span>
-      </header>
-      {#each files as file}{@const position = playbackPosition(
-          positionKey(endpoint, torrent.hashString, file),
-        )}<button
-          class="watch-file"
-          class:active={selected?.index === file.index}
-          onclick={() => watch(file)}
-          ><span class="watch-file-icon"
-            >{#if selected?.index === file.index}<Play size={18} fill="currentColor" />{:else}<Film
-                size={20}
-              />{/if}</span
-          ><span class="watch-file-name"
-            ><b>{file.name.split('/').at(-1)}</b><small
-              >{position ? `Continue from ${clock(position.time)} · ` : ''}{bytes(file.length)} · {file.bytesCompleted >=
-              file.length
-                ? 'Downloaded'
-                : `${percent(file.bytesCompleted / file.length)} downloaded`}</small
-            ></span
-          ><span class="watch-file-play"><Play size={16} /></span></button
-        >{/each}
-    </section>
-  {/if}
+                <span class="watch-file-icon" aria-hidden="true"><Film size={16} /></span>
+                <span class="watch-file-name">
+                  <b>{file.name.split('/').at(-1)}</b>
+                  <small>
+                    {position ? `Continue from ${clock(position.time)} · ` : ''}{bytes(file.length)} ·
+                    {file.bytesCompleted >= file.length
+                      ? 'Downloaded'
+                      : `${percent(file.bytesCompleted / file.length)} downloaded`}
+                  </small>
+                </span>
+                <span class="watch-file-action" aria-hidden="true">
+                  {#if active}<Check size={16} />{:else}<Play size={16} />{/if}
+                </span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
+  </div>
 </Modal>
