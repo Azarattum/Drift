@@ -4404,8 +4404,8 @@ media-fullscreen-button[data-fullscreen] .when-windowed {
   visibility: visible;
   pointer-events: auto;
 }
-.watch-fullscreen:not([data-controls-visible]),
-.watch-fullscreen:not([data-controls-visible]) video {
+.watch-canvas.watch-fullscreen:not([data-controls-visible]),
+.watch-canvas.watch-fullscreen:not([data-controls-visible]) video {
   cursor: none;
 }
 @supports (max-height: 100dvh) {

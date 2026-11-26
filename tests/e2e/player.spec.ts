@@ -506,6 +506,9 @@ test('fullscreen fills the video area and overlays controls that hide and wake o
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState))
     .toBeGreaterThanOrEqual(2);
+  const enterFullscreen = page.getByRole('button', { name: 'Enter fullscreen', exact: true });
+  await enterFullscreen.hover();
+  await expect(enterFullscreen).toHaveCSS('cursor', 'pointer');
   await page.keyboard.press('f');
   const canvas = page.locator('.watch-canvas');
   const controls = page.locator('.watch-controls');
@@ -546,7 +549,10 @@ test('fullscreen fills the video area and overlays controls that hide and wake o
   await page.waitForTimeout(2300);
   await expect(controls).toHaveCSS('opacity', '1');
   await expect(video).toHaveCSS('cursor', 'none');
-  await page.getByRole('button', { name: 'Exit fullscreen', exact: true }).click();
+  const exitFullscreen = page.getByRole('button', { name: 'Exit fullscreen', exact: true });
+  await exitFullscreen.hover();
+  await expect(exitFullscreen).toHaveCSS('cursor', 'pointer');
+  await exitFullscreen.click();
   await expect(canvas).not.toHaveClass(/watch-fullscreen/);
 });
 
@@ -828,8 +834,8 @@ for (const viewport of [
     const confirmation = page.getByRole('dialog', { name: 'Delete downloaded data?' });
     await confirmation.getByRole('button', { name: 'Cancel' }).click();
     await page.getByRole('button', { name: 'Subtitles', exact: true }).click();
-    await page.getByRole('menuitemradio', { name: 'Off', exact: true }).click({ trial: true });
-    await page.keyboard.press('Escape');
+    await page.getByRole('menuitemradio', { name: 'Off', exact: true }).click();
+    await expect(page.getByRole('menu', { name: 'Subtitles' })).toHaveCount(0);
     await page.getByRole('button', { name: /^02 - Into the woods/ }).click();
     await expect(page.getByRole('region', { name: 'Video files' })).toHaveCount(0);
     await expect(player).toHaveAccessibleName('02 - Into the woods.mp4');
