@@ -5,6 +5,12 @@ Release tags and web/native package versions use the same semantic version.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-26
+
+### Fixed
+
+- Keep the cursor visible when hovering over the fullscreen button.
+
 ## [0.3.0] - 2026-11-26
 
 ### Added
