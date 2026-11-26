@@ -5,6 +5,8 @@ Release tags and web/native package versions use the same semantic version.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-26
+
 ### Added
 
 - Choose audio tracks during playback when the browser or Drift's decoder exposes multiple tracks.
